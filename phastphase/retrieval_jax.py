@@ -19,8 +19,8 @@ def view_as_complex(x, shape):
 def retrieve(far_field_intensities: jax.typing.ArrayLike,    #Magnitude squared of fourier transform
               support_mask: jax.typing.ArrayLike,           #Support mask
               winding_guess = (0,0),                        #Guess for the winding number
-              log_min: float = jnp.log(1e-12),              #Value to use for log(0)
-              scale_gradient: bool =True,                   #Whether to scale the loss funciton such that the initial infinity norm of the gradient is no more than 1
+              offset: float = 1e-14,                        #Value to offset y to ensure it is positive
+              scale_gradient: bool =False,                   #Whether to scale the loss funciton such that the initial infinity norm of the gradient is no more than 1
               max_iters: int = 100,                         #Maximum Iterations for use in minimization
               grad_tolerance: float = 1e-5)-> jax.Array:                #Gradient tolerance w/respect to infinity norm of gradient
     
@@ -33,20 +33,21 @@ def retrieve(far_field_intensities: jax.typing.ArrayLike,    #Magnitude squared 
     else:
         mask = support_mask
     '''
-    x_schwarz = schwarz_transform(far_field_intensities, winding_number, log_min, support_shape)
+    offset_intensities = far_field_intensities + offset
+    x_schwarz = schwarz_transform(offset_intensities, winding_number, support_shape)
 
-    return refine(x_schwarz, far_field_intensities, mask, winding_number, scale_gradient, max_iters, grad_tolerance)
+    return refine(x_schwarz, offset_intensities, mask, winding_number, scale_gradient, max_iters, grad_tolerance)
     
 def winding_calc(far_field_intensities, support_shape):
     return None
 
-def schwarz_transform(y, winding_tuple, min_log, support_shape):
-    cepstrum = jnp.fft.ifft2(jnp.fmax(jnp.log(y), min_log))
+def schwarz_transform(y, winding_tuple, support_shape):
+    cepstrum = jnp.fft.ifft2(jnp.log(y))
     cep_mask = jnp.zeros_like(cepstrum)
     cep_mask = cep_mask.at[0:y.shape[0]//2, 0:y.shape[1]//2].set(1)
     
     rolled_mask = jnp.roll(cep_mask, (-winding_tuple[0], -winding_tuple[1]), (0,1))
-    cep_mask = cep_mask.at[0, 0].set(0.5)
+    rolled_mask = rolled_mask.at[0, 0].set(0.5)
     x_cep = jnp.fft.ifft2(jnp.exp(jnp.fft.fft2(rolled_mask*cepstrum)), norm='ortho')
     x_rolled = jnp.roll(x_cep, winding_tuple, (0,1))
     x_unphased = lax.slice(x_rolled, (0,0), support_shape )
