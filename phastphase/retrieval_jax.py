@@ -16,27 +16,45 @@ def view_as_complex(x, shape):
     return lax.complex(x_c[:,:,0], x_c[:,:,1])
 
 
+''' 
+Constants to define loss functions for jax switch 
+'''
+
+L2_MAG_LOSS:int     = 0
+
+POISSON_LOSS:int    = 1
+
+
+
+
+
+
+
 def retrieve(far_field_intensities: jax.typing.ArrayLike,    #Magnitude squared of fourier transform
               support_mask: jax.typing.ArrayLike,           #Support mask
               winding_guess = (0,0),                        #Guess for the winding number
               offset: float = 1e-14,                        #Value to offset y to ensure it is positive
               scale_gradient: bool =False,                   #Whether to scale the loss funciton such that the initial infinity norm of the gradient is no more than 1
               max_iters: int = 100,                         #Maximum Iterations for use in minimization
-              grad_tolerance: float = 1e-5)-> jax.Array:                #Gradient tolerance w/respect to infinity norm of gradient
+              grad_tolerance: float = 1e-5,                 #Gradient tolerance w/respect to infinity norm of gradient
+              tv_reg: float = 0.0,                          #Regularization Parameter for TV regularization
+              far_field_mask: Optional[jax.typing.ArrayLike] = None,   #Far field mask for cropped far_fields
+              loss_type = L2_MAG_LOSS)-> jax.Array:         #Loss Type       
     
     winding_number = winding_guess
     mask = support_mask
     support_shape = mask.shape
-    '''
-    if support_mask is None:
-        mask = jnp.ones(support_shape)
+
+
+    if far_field_mask is None:
+        ff_mask = jnp.ones_like(far_field_intensities)
     else:
-        mask = support_mask
-    '''
+        ff_mask = far_field_mask
+
     offset_intensities = far_field_intensities + offset
     x_schwarz = schwarz_transform(offset_intensities, winding_number, support_shape)
 
-    return refine(x_schwarz, offset_intensities, mask, winding_number, scale_gradient, max_iters, grad_tolerance)
+    return refine(x_schwarz, offset_intensities, mask, winding_number, scale_gradient, max_iters, grad_tolerance, tv_reg,ff_mask, loss_type)
     
 def winding_calc(far_field_intensities, support_shape):
     return None
@@ -60,20 +78,39 @@ def refine(x_init: jax.typing.ArrayLike,                 #Initial Guess for x
            phase_reference_point: Tuple[int, int] = (0,0),       #Point to use as zero-phase reference
            scale_gradient: bool = False,               #Whether to scale the loss funciton such that the initial infinity norm of the gradient is no more than 1
            max_iters: int=100,                       #Maximum iterations for trust region minimization
-           grad_tolerance: float =1e-5) -> jax.Array:                #Gradient tolerance w/respect to infinity norm of gradient
+           grad_tolerance: float =1e-5,
+           tv_reg: float = 0.0,
+           far_field_mask: Optional[jax.typing.ArrayLike] = None,
+           loss_type = L2_MAG_LOSS) -> jax.Array:                #Gradient tolerance w/respect to infinity norm of gradient
     mask = support_mask
     support_shape = mask.shape
     x_slice = lax.slice(x_init, (0,0), support_shape)
-    '''
-    if  support_mask is None:
-        mask = jnp.ones_like(x_slice)
+    if far_field_mask is None:
+        ff_mask = jnp.ones_like(far_field_intensities)
     else:
-        mask = support_mask
-    '''
-    x0 = view_as_flat_real(mask*x_slice)
+        ff_mask = far_field_mask
 
-    def loss_func(x):
-        return masked_L2_mag_loss(x, jnp.sqrt(far_field_intensities) ,mask, x_slice.shape, phase_reference_point)
+    x0 = view_as_flat_real(mask*x_slice)
+    far_field_mags = jnp.sqrt(far_field_intensities)
+
+    def L2_Loss(x):
+        return masked_L2_mag_loss(x,
+                far_field_mags,
+                mask,
+                x_slice.shape,
+                phase_reference_point,
+                tv_reg,
+                ff_mask)
+    def Poisson_Loss(x):
+        return masked_poisson_loss(x,
+                far_field_mags,
+                mask,
+                x_slice.shape,
+                phase_reference_point,
+                tv_reg,
+                ff_mask)
+    def loss_func(x):   
+        return lax.switch(loss_type, [L2_Loss, Poisson_Loss], x)
     def true_fun():
         return 1/jnp.fmax(jnp.linalg.vector_norm(jax.grad(loss_func)(x0), ord=jnp.inf),1.0)
     def false_fun():
@@ -83,6 +120,8 @@ def refine(x_init: jax.typing.ArrayLike,                 #Initial Guess for x
         return loss_scaling*loss_func(x)
     result = minimize_trust_region(scaled_loss, x0, max_iters, gtol = grad_tolerance)
     return view_as_complex(result.x_k, support_shape)
+
+
 
 
 
@@ -100,7 +139,28 @@ def masked_L2_mag_loss(x,
                 mask,
                 shape,
                 phase_ref_point,
+                tv_reg,
+                ff_mask,
                 phase_reg = 1):
     x_c = mask*view_as_complex(x, shape)
-    return jnp.square(jnp.linalg.vector_norm(jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))/y-y))/8 + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 
+    far_field = jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho'))
+    gradient_1 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(far_field), axis=2),axis=2)
+    gradient_2 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(y), axis=2),axis=2)
+    tv = jnp.square(jnp.linalg.vector_norm(gradient_1-gradient_2))
+    return jnp.square(jnp.linalg.vector_norm((jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))/y-y)))/8 + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 + tv_reg*tv
 
+def masked_poisson_loss(x,
+                y,
+                mask,
+                shape,
+                phase_ref_point,
+                tv_reg,
+                ff_mask,
+                phase_reg = 1):
+    x_c = mask*view_as_complex(x, shape)
+    intensities = jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))
+    far_field = jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho'))
+    gradient_1 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(far_field), axis=2),axis=2)
+    gradient_2 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(y), axis=2),axis=2)
+    tv = jnp.square(jnp.linalg.vector_norm(gradient_1-gradient_2))
+    return jnp.sum((intensities - jnp.square(y)*jnp.log(intensities))) + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 + tv_reg*tv
