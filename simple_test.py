@@ -8,6 +8,7 @@ import jax.scipy.optimize
 
 from phastphase.retrieval_jax import retrieve
 
+from phastphase.intensity_interpolation import interpolate_intensities
 
 
 key = random.key(42)

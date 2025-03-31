@@ -81,7 +81,9 @@ def refine(x_init: jax.typing.ArrayLike,                 #Initial Guess for x
            grad_tolerance: float =1e-5,
            tv_reg: float = 0.0,
            far_field_mask: Optional[jax.typing.ArrayLike] = None,
-           loss_type = L2_MAG_LOSS) -> jax.Array:                #Gradient tolerance w/respect to infinity norm of gradient
+           loss_type = L2_MAG_LOSS,
+           cost_match_reg:float = 0.0,
+           cost_val_2: float = 0.0) -> jax.Array:                #Gradient tolerance w/respect to infinity norm of gradient
     mask = support_mask
     support_shape = mask.shape
     x_slice = lax.slice(x_init, (0,0), support_shape)
@@ -109,8 +111,10 @@ def refine(x_init: jax.typing.ArrayLike,                 #Initial Guess for x
                 phase_reference_point,
                 tv_reg,
                 ff_mask)
-    def loss_func(x):   
+    def loss_func_unreg(x):   
         return lax.switch(loss_type, [L2_Loss, Poisson_Loss], x)
+    def loss_func(x):
+        return loss_func_unreg(x) + cost_match_reg*jnp.square(loss_func_unreg(x) - cost_val_2)
     def true_fun():
         return 1/jnp.fmax(jnp.linalg.vector_norm(jax.grad(loss_func)(x0), ord=jnp.inf),1.0)
     def false_fun():
@@ -119,7 +123,7 @@ def refine(x_init: jax.typing.ArrayLike,                 #Initial Guess for x
     def scaled_loss(x):
         return loss_scaling*loss_func(x)
     result = minimize_trust_region(scaled_loss, x0, max_iters, gtol = grad_tolerance)
-    return view_as_complex(result.x_k, support_shape)
+    return (view_as_complex(result.x_k, support_shape), result.f_k)
 
 
 
@@ -132,7 +136,7 @@ def L2_mag_loss(x,
                 phase_ref_point,
                 phase_reg = 1):
     x_c = view_as_complex(x, shape)
-    return jnp.square(jnp.linalg.vector_norm(jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))/y-y))/8 + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 
+    return jnp.square(jnp.linalg.vector_norm(jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))/y-y, ord=1))/8 + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 
 
 def masked_L2_mag_loss(x,
                 y,
@@ -141,12 +145,13 @@ def masked_L2_mag_loss(x,
                 phase_ref_point,
                 tv_reg,
                 ff_mask,
-                phase_reg = 1):
+                phase_reg = 1e-10):
     x_c = mask*view_as_complex(x, shape)
+    y = jnp.fmax(y, 1e-14)
     far_field = jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho'))
-    gradient_1 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(far_field), axis=2),axis=2)
-    gradient_2 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(y), axis=2),axis=2)
-    tv = jnp.square(jnp.linalg.vector_norm(gradient_1-gradient_2))
+    gradient_1 = jnp.stack(jnp.gradient(far_field), axis=2)
+    gradient_2 = jnp.stack(jnp.gradient(y), axis=2)
+    tv = jnp.square(jnp.linalg.vector_norm(gradient_1-gradient_2,ord=1))
     return jnp.square(jnp.linalg.vector_norm((jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))/y-y)))/8 + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 + tv_reg*tv
 
 def masked_poisson_loss(x,
@@ -156,11 +161,11 @@ def masked_poisson_loss(x,
                 phase_ref_point,
                 tv_reg,
                 ff_mask,
-                phase_reg = 1):
+                phase_reg = 1e-10):
     x_c = mask*view_as_complex(x, shape)
-    intensities = jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho')))
+    intensities = jnp.fmax(jnp.square(jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho'))),1e-14)
     far_field = jnp.abs(jnp.fft.fft2(x_c,s=y.shape,norm='ortho'))
-    gradient_1 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(far_field), axis=2),axis=2)
-    gradient_2 = jnp.linalg.vector_norm(jnp.stack(jnp.gradient(y), axis=2),axis=2)
+    gradient_1 = jnp.stack(jnp.gradient(far_field), axis=2)
+    gradient_2 = jnp.stack(jnp.gradient(y), axis=2)
     tv = jnp.square(jnp.linalg.vector_norm(gradient_1-gradient_2))
     return jnp.sum((intensities - jnp.square(y)*jnp.log(intensities))) + phase_reg*jnp.square(jnp.imag(x_c[*phase_ref_point]))/2 + tv_reg*tv
