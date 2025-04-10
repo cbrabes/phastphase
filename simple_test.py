@@ -15,12 +15,11 @@ x_real = random.normal(key, shape=(256, 256))
 x_complex = random.normal(key, shape=(256, 256))
 
 x = jnp.copy(lax.complex(x_real, x_complex))
-x = x.at[1, 1].set(2 * 256**2)
-y = jnp.square(jnp.abs(jnp.fft.fft2(x, s=(512, 512), norm="ortho")))
+x = x.at[1, 1].set(10 * 256)
+y = jnp.square(jnp.abs(jnp.fft.fft2(x, s=(1024, 1024), norm="ortho")))
 shape = (256, 256)
 mask = jnp.ones(shape, dtype=jnp.float64)  # Full mask, no masking
-retrieve_jit = jax.jit(retrieve)
-x_out, cost = retrieve_jit(
+x_out, cost = retrieve(
     y, mask, max_iters=10, grad_tolerance=1e-14, winding_guess=(1, 1)
 )
 
