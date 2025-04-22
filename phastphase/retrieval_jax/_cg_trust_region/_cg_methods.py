@@ -9,6 +9,8 @@ for Smooth Unconstrained Optimization"
 from typing import Callable, NamedTuple, Tuple
 
 import jax
+import jax.experimental
+import jax.experimental.sparse
 import jax.numpy as jnp
 from jax import lax
 from jax.tree_util import Partial
@@ -49,6 +51,18 @@ def _get_boundaries_intersection(
     return jnp.fmax(ta, tb)
 
 
+# Convergence Status
+# 0: negative curvature
+# 1: hit boundary
+# 2: interior solution
+# 3: iteration limit reached
+NOT_CONVERGED = -1
+NEGATIVE_CURVATURE = 0
+HIT_BOUNDARY = 1
+INTERIOR_SOLUTION = 2
+ITERATION_LIMIT_REACHED = 3
+
+
 class _CappedCGState(NamedTuple):
     residual: jnp.ndarray
     residual_norm_squared: float
@@ -58,7 +72,6 @@ class _CappedCGState(NamedTuple):
     convergence_status: ArrayLike
     converged: ArrayLike
     search_direction: jnp.ndarray
-    trust_radius: float
 
 
 def _capped_cg_step(
@@ -68,6 +81,7 @@ def _capped_cg_step(
     damping_factor: float,
     g_norm: ArrayLike,
     iter_limit: int,
+    trust_radius: float,
 ) -> _CappedCGState:
     # Perform Standard CG Step
     hess_p = damped_hvp_func(state.p)
@@ -79,7 +93,7 @@ def _capped_cg_step(
     p_new = -r_new + beta * state.p
 
     # End Standard CG Steo
-    sigma = _get_boundaries_intersection(state.y, state.p, state.trust_radius)
+    sigma = _get_boundaries_intersection(state.y, state.p, trust_radius)
 
     # List of Possible Search Direction
     search_direction_neg_curve = state.y + sigma * state.p
@@ -95,7 +109,7 @@ def _capped_cg_step(
     )
 
     # Search Direction Hits Boundary
-    hit_boundary = jnp.greater_equal(jnp.linalg.vector_norm(y_new), state.trust_radius)
+    hit_boundary = jnp.greater_equal(jnp.linalg.vector_norm(y_new), trust_radius)
 
     # CG has converged to the interior of the trust region
     interior_solution = jnp.less_equal(
@@ -126,7 +140,7 @@ def _capped_cg_step(
         jnp.where(
             hit_boundary,
             1,
-            jnp.where(interior_solution, 2, 3),
+            jnp.where(interior_solution, 2, jnp.where(iter_limit_reached, 3, -1)),
         ),
     )
 
@@ -147,12 +161,57 @@ def _capped_cg_step(
         convergence_status=convergence_status,
         converged=converged,
         search_direction=search_direction,
-        trust_radius=state.trust_radius,
     )
 
 
 def _capped_cg_cond(state: _CappedCGState) -> ArrayLike:
     return jnp.logical_not(state.converged)
+
+
+def capped_cg_method(
+    hessvp: Callable,
+    gradient: jnp.ndarray,
+    damping_factor: float,
+    trust_radius: float,
+    relative_accuracy: float,
+    iter_limit: ArrayLike,
+) -> _CappedCGState:
+    """
+    Conjugate gradient method with trust region
+    """
+
+    def damped_hvp(p: jnp.ndarray) -> jnp.ndarray:
+        return hessvp(p) + 2 * damping_factor * p
+
+    r0 = gradient
+    r0_norm_squared = _dot(r0, r0)
+    p0 = -r0
+    y0 = jnp.zeros_like(gradient)
+    init_state = _CappedCGState(
+        residual=r0,
+        residual_norm_squared=r0_norm_squared,
+        p=p0,
+        y=y0,
+        step_number=0,
+        convergence_status=jnp.array(-1),
+        converged=jnp.array(False),
+        search_direction=jnp.zeros_like(gradient),
+    )
+    _capped_body_fun = Partial(
+        _capped_cg_step,
+        damped_hvp_func=damped_hvp,
+        relative_accuracy=relative_accuracy,
+        damping_factor=damping_factor,
+        g_norm=jnp.linalg.vector_norm(gradient),
+        iter_limit=iter_limit,
+        trust_radius=trust_radius,
+    )
+    final_state: _CappedCGState = lax.while_loop(
+        _capped_cg_cond,
+        _capped_body_fun,
+        init_state,
+    )
+    return final_state
 
 
 class _LanczosState(NamedTuple):
@@ -234,7 +293,7 @@ def randomized_min_lanczos(
     hessvp,
     example_x: jnp.ndarray,
     maxiter: int,
-    random_key: float = 42,
+    random_key: int = 42,
 ) -> ArrayLike:
     key = jax.random.key(random_key)
     v0 = jax.random.normal(key, example_x.shape)
@@ -243,3 +302,27 @@ def randomized_min_lanczos(
     eigvals = jax.scipy.linalg.eigh_tridiagonal(alphas, betas, eigvals_only=True)
     min_eigval = jnp.min(eigvals)
     return min_eigval
+
+
+def lobpcg_min_eigpair(
+    damped_hvp: Callable,
+    example_x: jnp.ndarray,
+    iter_limit: int,
+    tol: float = 1e-10,
+    random_key: int = 42,
+) -> Tuple[ArrayLike, ArrayLike]:
+    """
+    Check if the curvature is negative.
+    """
+    key = jax.random.key(random_key)
+
+    X0 = jax.random.normal(key, example_x.shape)
+    X0 = X0 / jnp.linalg.vector_norm(X0)
+
+    def negative_damped_hvp(p: jnp.ndarray) -> jnp.ndarray:
+        return -damped_hvp(p)
+
+    (eigval, eigvecs, iter_reached) = jax.experimental.sparse.linalg.lobpcg_standard(
+        negative_damped_hvp, X0, tol=tol, m=iter_limit
+    )
+    return (eigvecs, -eigval)
