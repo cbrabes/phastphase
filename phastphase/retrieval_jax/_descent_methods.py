@@ -79,3 +79,13 @@ def lbfgs_minimize(
     )
     final_state = lax.while_loop(cond_func, step_func, state)
     return final_state
+
+
+def lbfgs_saddlepoint_escape(
+    cost_function: Callable,
+    x_0: jnp.ndarray,
+    max_itertaions: int,
+    rtol: float = 1e-5,
+    atol: float = 1e-15,
+):
+    """Optimize a function using a compound LBFGS/ Newton method."""

@@ -168,6 +168,16 @@ def mat_free_replace_negative_intensities(
     rtol: float = 1e-12,
     atol: float = 1e-12,
 ):
+    """
+    Replace negative intensities in the far-field pattern with interpolated values.
+    Args:
+        far_field_intensities (jnp.ndarray): Total far-field pattern, with missing elements set to negative values.
+        near_field_support_mask (jnp.ndarray): Support mask, the total size should be the size of the far-field.
+        rtol (float, optional): Relative tolerance for the solver. Defaults to 1e-12.
+        atol (float, optional): Absolute tolerance for the solver. Defaults to 1e-12.
+    Returns:
+        jnp.ndarray: Far-field pattern with negative intensities replaced by interpolated values.
+    """
     index_mask = jnp.zeros_like(far_field_intensities)
     index_mask = index_mask.at[jnp.less(far_field_intensities, 0)].set(1)
     missing_indices = jnp.flatnonzero(index_mask)

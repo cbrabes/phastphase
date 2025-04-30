@@ -194,7 +194,9 @@ def CGSteihaugSubproblem(
                 [
                     False,
                     jnp.less_equal(dBd, 0),
-                    jnp.greater_equal(jnpla.norm(z_next, ord=norm), trust_radius),
+                    jnp.greater_equal(
+                        jnpla.vector_norm(z_next, ord=norm), trust_radius
+                    ),
                     jnp.less_equal(jnp.sqrt(r_next_squared), tolerance),
                 ]
             )

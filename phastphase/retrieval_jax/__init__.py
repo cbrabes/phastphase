@@ -1,3 +1,4 @@
+from ._alternating_projections import HIO, damped_ER
 from ._intensity_interpolation import (
     mat_free_replace_negative_intensities,
     replace_negative_intensities,
@@ -8,7 +9,6 @@ from ._retrieval_jax import (
     masked_L2_mag_loss,
     masked_mag_loss,
     masked_poisson_loss,
-    minimize_trust_region,
     refine,
     retrieve,
     view_as_complex,
@@ -16,7 +16,6 @@ from ._retrieval_jax import (
 )
 
 __all__ = [
-    "minimize_trust_region",
     "L2_mag_loss",
     "masked_L2_mag_loss",
     "masked_poisson_loss",
@@ -28,4 +27,6 @@ __all__ = [
     "refine",
     "replace_negative_intensities",
     "mat_free_replace_negative_intensities",
+    "HIO",
+    "damped_ER",
 ]

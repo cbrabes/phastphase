@@ -58,7 +58,36 @@ def HIO(
     max_iters: int = 100,
     beta: float = 0.9,
 ) -> _HIOState:
-    """Perform the Hybrid Input-Output (HIO) algorithm."""
+    """
+    Runs the Hybrid Input-Output (HIO) algorithm given an initial seed object `x0`.
+
+    The HIO algorithm is an iterative phase retrieval method used to reconstruct an object
+    from its Fourier Intensity measurements. It alternates between enforcing constraints
+    in the object domain and the Fourier domain, with a feedback parameter `beta` to
+    control the update step.
+
+        x0 (jnp.ndarray): The initial guess for the object. This should be a 2D array
+            representing the spatial domain of the object.
+        mask (jnp.ndarray): The near-field support mask, which defines the region of
+            interest in the object domain. It should have the same shape as `y`.
+        y (jnp.ndarray): The target array representing the Fourier Intensity measurements.
+        tolerance (float, optional): The tolerance for convergence. The algorithm stops
+            when the the residual (norm of the difference between the current and target Fourier magnitudes)
+            is below this value. Defaults to 1e-3.
+        max_iters (int, optional): The maximum number of iterations to run the algorithm.
+            Defaults to 100.
+        beta (float, optional): The feedback parameter used in the HIO update step.
+            Controls the influence of the previous estimate on the current update.
+            Defaults to 0.9.
+
+    Returns:
+        _HIOState: A dataclass containing the final state of the algorithm, including:
+            - `x` (jnp.ndarray): The reconstructed object.
+            - `iteration` (int): The number of iterations performed.
+            - `residual` (float): The final residual value indicating the difference
+              between the current and target Fourier magnitudes.
+
+    """
     HIO_step_func = jax.tree_util.Partial(
         _HIO_projection_step, mask=mask, y=y, beta=beta
     )
@@ -118,7 +147,29 @@ def damped_ER(
     near_field_damping: float = 0.9,
     far_field_damping: float = 0.9,
 ) -> _HIOState:
-    """Perform the Damped Error Reduction (ER) algorithm."""
+    """
+    Perform the Damped Error Reduction (ER) algorithm.
+
+    This function implements the Damped Error Reduction (ER) algorithm for phase retrieval.
+    It iteratively updates an initial guess `x0` to minimize the residual error between the
+    measured data `y` and the Fourier transform of the masked input.
+
+    Args:
+        x0 (jnp.ndarray): Initial guess for the solution.
+        mask (jnp.ndarray): Binary mask applied to the input in the near field.
+        y (jnp.ndarray): Measured intensity data in the far field.
+        tolerance (float, optional): Convergence tolerance for the residual error. Defaults to 1e-3.
+        max_iters (int, optional): Maximum number of iterations to perform. Defaults to 100.
+        near_field_damping (float, optional): Damping factor for the near field updates. Defaults to 0.9.
+        far_field_damping (float, optional): Damping factor for the far field updates. Defaults to 0.9.
+
+    Returns:
+        _HIOState: A dataclass containing the final state of the algorithm, including:
+            - `x` (jnp.ndarray): The reconstructed object.
+            - `iteration` (int): The number of iterations performed.
+            - `residual` (float): The final residual value indicating the difference
+              between the current and target Fourier magnitudes.
+    """
     damped_ER_step_func = jax.tree_util.Partial(
         _damped_ER_projection_step,
         mask=mask,

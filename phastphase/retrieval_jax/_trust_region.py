@@ -14,13 +14,15 @@
 """The trust-region minimization algorithm."""
 
 from functools import partial
-from typing import Callable, NamedTuple, Optional, Union
+from typing import Callable, NamedTuple, Optional, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 import jax.numpy.linalg as jnpla
 from jax import grad, jvp, lax, value_and_grad
+from jax.typing import ArrayLike
 
+from ._jax_ncg_methods._cg_methods import lobpcg_min_eigpair
 from ._quad_subproblem import CGSteihaugSubproblem
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
@@ -67,27 +69,26 @@ def minimize_trust_region(
     fun: Callable,
     x0: jnp.ndarray,
     maxiter: Optional[int] = None,
-    norm=jnp.inf,
+    norm=2,
     gtol: float = 1e-5,
-    max_trust_radius: Union[float, jnp.ndarray] = 100.0,
-    initial_trust_radius: Union[float, jnp.ndarray] = 1.0,
-    eta: Union[float, jnp.ndarray] = 0.15,
+    max_trust_radius: Union[float, jnp.ndarray] = 500.0,
+    initial_trust_radius: Union[float, jnp.ndarray] = 1e-2,
+    eta: Union[float, jnp.ndarray] = 0.25,
     method="trust-ncg",
 ) -> _TrustRegionResults:
     subp = CGSteihaugSubproblem
-
     vg_f = value_and_grad(fun)
     g_f = grad(fun)
     f_0, g_0 = vg_f(x0)
 
     init_params = _TrustRegionResults(
         converged=False,
-        good_approx=jnp.isfinite(jnpla.norm(g_0, ord=norm)),
+        good_approx=jnp.isfinite(jnpla.vector_norm(g_0, ord=norm)),
         k=1,
         x_k=x0,
         f_k=f_0,
         g_k=g_0,
-        g_k_mag=jnpla.norm(g_0, ord=norm),
+        g_k_mag=jnpla.vector_norm(g_0, ord=norm),
         nfev=1,
         ngev=1,
         trust_radius=initial_trust_radius,
@@ -140,7 +141,7 @@ def minimize_trust_region(
         )
 
         # compute norm to check for convergence
-        g_kp1_mag = jnpla.norm(g_kp1, ord=norm)
+        g_kp1_mag = jnpla.vector_norm(g_kp1, ord=norm)
 
         # if the ratio is high enough then accept the proposed step
         # repeated check to skirt using cond/branching

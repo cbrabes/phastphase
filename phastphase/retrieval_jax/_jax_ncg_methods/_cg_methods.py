@@ -21,7 +21,7 @@ _dot = Partial(jnp.dot, precision=lax.Precision.HIGHEST)
 
 def _get_boundaries_intersection(
     z: jnp.ndarray, d: jnp.ndarray, trust_radius: ArrayLike
-) -> ArrayLike:
+) -> Tuple[ArrayLike, ArrayLike]:
     """
     ported from scipy
 
@@ -48,7 +48,9 @@ def _get_boundaries_intersection(
     tb = -2 * c / aux
 
     # ta and tb are real and opposite sign, therefore the greater value is the positive root
-    return jnp.fmax(ta, tb)
+    ra = jnp.where(ta < tb, ta, tb)
+    rb = jnp.where(ta < tb, tb, ta)
+    return (ra, rb)
 
 
 # Convergence Status
@@ -76,15 +78,15 @@ class _CappedCGState(NamedTuple):
 
 def _capped_cg_step(
     state: _CappedCGState,
-    damped_hvp_func: Callable,
+    hvp_func: Callable,
     relative_accuracy: float,
-    damping_factor: float,
     g_norm: ArrayLike,
     iter_limit: int,
     trust_radius: float,
+    second_order_change_f: Callable,
 ) -> _CappedCGState:
     # Perform Standard CG Step
-    hess_p = damped_hvp_func(state.p)
+    hess_p = hvp_func(state.p)
     alpha = state.residual_norm_squared / _dot(state.p, hess_p)
     y_new = state.y + alpha * state.p
     r_new = state.residual + alpha * hess_p
@@ -93,20 +95,26 @@ def _capped_cg_step(
     p_new = -r_new + beta * state.p
 
     # End Standard CG Steo
-    sigma = _get_boundaries_intersection(state.y, state.p, trust_radius)
+    r_a, r_b = _get_boundaries_intersection(state.y, state.p, trust_radius)
+
+    search_a = state.y + r_a * state.p
+
+    search_b = state.y + r_b * state.p
 
     # List of Possible Search Direction
-    search_direction_neg_curve = state.y + sigma * state.p
-    search_direction_hit_boundary = state.y + sigma * state.p
+    search_direction_neg_curve = state.y + r_b * state.p
+    search_direction_hit_boundary = jnp.where(
+        second_order_change_f(search_a) < second_order_change_f(search_b),
+        search_a,
+        search_b,
+    )
     search_direction_interior = y_new
     search_direction_iter_limit = y_new
 
     # The convergence criteria:
 
     # Negative Curvature Detected
-    negative_curvature = jnp.less(
-        _dot(state.p, hess_p), damping_factor * _dot(state.p, state.p)
-    )
+    negative_curvature = jnp.less(_dot(state.p, hess_p), 0)
 
     # Search Direction Hits Boundary
     hit_boundary = jnp.greater_equal(jnp.linalg.vector_norm(y_new), trust_radius)
@@ -114,8 +122,7 @@ def _capped_cg_step(
     # CG has converged to the interior of the trust region
     interior_solution = jnp.less_equal(
         jnp.linalg.vector_norm(r_new),
-        (relative_accuracy / 2)
-        * jnp.fmin(g_norm, damping_factor * jnp.linalg.vector_norm(y_new)),
+        (relative_accuracy / 2) * g_norm,
     )
 
     # Limit of cg iterations reached
@@ -171,18 +178,13 @@ def _capped_cg_cond(state: _CappedCGState) -> ArrayLike:
 def capped_cg_method(
     hessvp: Callable,
     gradient: jnp.ndarray,
-    damping_factor: float,
-    trust_radius: float,
+    trust_radius: ArrayLike,
     relative_accuracy: float,
     iter_limit: ArrayLike,
 ) -> _CappedCGState:
     """
-    Conjugate gradient method with trust region
+    Conjugate gradient method for solving the trust region subproblem.
     """
-
-    def damped_hvp(p: jnp.ndarray) -> jnp.ndarray:
-        return hessvp(p) + 2 * damping_factor * p
-
     r0 = gradient
     r0_norm_squared = _dot(r0, r0)
     p0 = -r0
@@ -199,9 +201,8 @@ def capped_cg_method(
     )
     _capped_body_fun = Partial(
         _capped_cg_step,
-        damped_hvp_func=damped_hvp,
+        hvp_func=hessvp,
         relative_accuracy=relative_accuracy,
-        damping_factor=damping_factor,
         g_norm=jnp.linalg.vector_norm(gradient),
         iter_limit=iter_limit,
         trust_radius=trust_radius,
@@ -305,24 +306,26 @@ def randomized_min_lanczos(
 
 
 def lobpcg_min_eigpair(
-    damped_hvp: Callable,
+    hvp: Callable,
     example_x: jnp.ndarray,
     iter_limit: int,
     tol: float = 1e-10,
     random_key: int = 42,
 ) -> Tuple[ArrayLike, ArrayLike]:
     """
-    Check if the curvature is negative.
+    Returns the minimum eigenvalue and eigenvector of the Hessian
+    using the LOBPCG method.
+
     """
     key = jax.random.key(random_key)
 
     X0 = jax.random.normal(key, example_x.shape)
     X0 = X0 / jnp.linalg.vector_norm(X0)
 
-    def negative_damped_hvp(p: jnp.ndarray) -> jnp.ndarray:
-        return -damped_hvp(p)
+    def negative_hvp(p: jnp.ndarray) -> jnp.ndarray:
+        return -hvp(p)
 
     (eigval, eigvecs, iter_reached) = jax.experimental.sparse.linalg.lobpcg_standard(
-        negative_damped_hvp, X0, tol=tol, m=iter_limit
+        negative_hvp, X0, tol=tol, m=iter_limit
     )
     return (eigvecs, -eigval)
