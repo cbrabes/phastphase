@@ -321,6 +321,7 @@ def lobpcg_min_eigpair(
 
     X0 = jax.random.normal(key, example_x.shape)
     X0 = X0 / jnp.linalg.vector_norm(X0)
+    X0 = jnp.reshape(X0, (X0.shape[0], 1))
 
     def negative_hvp(p: jnp.ndarray) -> jnp.ndarray:
         return -hvp(p)
@@ -329,3 +330,109 @@ def lobpcg_min_eigpair(
         negative_hvp, X0, tol=tol, m=iter_limit
     )
     return (eigvecs, -eigval)
+
+
+class _CurvedNewtonCGState(NamedTuple):
+    xk: jnp.ndarray
+    rk: jnp.ndarray
+    pk: jnp.ndarray
+    yk: jnp.ndarray
+    search_direction: jnp.ndarray
+    termination_status: ArrayLike
+    iter_number: ArrayLike
+    converged: ArrayLike
+
+
+RESIDUAL_CONVERGED = 1
+
+
+def _curved_newton_cg_step(
+    state: _CurvedNewtonCGState,
+    hvp_func: Callable,
+    preconditioner: Callable,
+    rhs: jnp.ndarray,
+    norm_target: ArrayLike,
+    max_iters: int,
+) -> _CurvedNewtonCGState:
+    """
+    Perform a single step of the Curved Newton-CG method.
+    """
+    # Compute the Hessian-vector product
+    hess_p = hvp_func(state.pk)
+
+    # Compute the step length
+    alpha = _dot(state.rk, state.yk) / _dot(state.pk, hess_p)
+
+    xk_new = state.xk + alpha * state.pk
+    rk_new = state.rk + alpha * hess_p
+    yk_new = preconditioner(rk_new)
+    beta = _dot(rk_new, yk_new) / _dot(state.rk, state.yk)
+    pk_new = -yk_new + beta * state.pk
+    p_negative_curvature = jnp.less(_dot(state.pk, hess_p), 0)
+    residual_converged = jnp.less_equal(jnp.linalg.vector_norm(rk_new), norm_target)
+
+    use_p = jnp.logical_and(
+        jnp.logical_not(residual_converged),
+        p_negative_curvature,
+    )
+    new_search_direction = lax.select(use_p, state.pk, state.xk)
+    new_termination_status = jnp.where(
+        residual_converged,
+        RESIDUAL_CONVERGED,
+        jnp.where(p_negative_curvature, NEGATIVE_CURVATURE, -1),
+    )
+    new_iter_number = state.iter_number + 1
+
+    iters_reached = jnp.greater_equal(new_iter_number, max_iters)
+    new_converged = jnp.logical_or(
+        residual_converged, jnp.logical_or(iters_reached, p_negative_curvature)
+    )
+    return _CurvedNewtonCGState(
+        xk=xk_new,
+        rk=rk_new,
+        pk=pk_new,
+        yk=yk_new,
+        search_direction=new_search_direction,
+        termination_status=new_termination_status,
+        iter_number=new_iter_number,
+        converged=new_converged,
+    )
+
+
+def _curved_newton_cg_cond(state: _CurvedNewtonCGState) -> ArrayLike:
+    return jnp.logical_not(state.converged)
+
+
+def curved_newton_cg_method(
+    hessvp: Callable,
+    preconditioner: Callable,
+    gradient: jnp.ndarray,
+    max_iters: int,
+) -> _CurvedNewtonCGState:
+    """
+    Curved Newton-CG method for solving the trust region subproblem.
+    """
+    r0 = gradient
+    y0 = preconditioner(r0)
+    p0 = -y0
+    init_state = _CurvedNewtonCGState(
+        xk=jnp.zeros_like(gradient),
+        rk=r0,
+        pk=p0,
+        yk=y0,
+        search_direction=jnp.zeros_like(gradient),
+        termination_status=jnp.array(-1),
+        iter_number=jnp.array(0),
+        converged=jnp.array(False),
+    )
+    _curved_body_fun = Partial(
+        _curved_newton_cg_step,
+        hvp_func=hessvp,
+        preconditioner=preconditioner,
+        norm_target=jnp.fmin(0.5, jnp.sqrt(jnp.linalg.vector_norm(gradient))),
+        max_iters=max_iters,
+    )
+    final_state: _CurvedNewtonCGState = lax.while_loop(
+        _curved_newton_cg_cond, _curved_body_fun, init_state
+    )
+    return final_state
