@@ -5,6 +5,8 @@ from jax import Array, lax
 from jax.tree_util import Partial
 from jax.typing import ArrayLike
 
+from ._loss_funcs import view_as_complex
+
 _dot = Partial(jnp.dot, precision=lax.Precision.HIGHEST)
 
 
@@ -62,10 +64,11 @@ def polynomial_phase_loss_coefficients(
 
 def _exact_quartic_minimizer(coefficients: jnp.ndarray) -> Array:
     cubic_coeffs = jnp.polyder(coefficients)
-    roots = jnp.roots(cubic_coeffs)
+    roots = jnp.roots(cubic_coeffs, strip_zeros=False)
     roots = jnp.real(roots)
     function_values = jnp.polyval(coefficients, roots)
     min_index = jnp.argmin(function_values)
+
     return roots[min_index]
 
 
@@ -75,7 +78,7 @@ def _closest_quartic_local_minimum(coefficients: jnp.ndarray) -> Array:
     """
 
     cubic_coeffs = jnp.polyder(coefficients)
-    roots = jnp.roots(cubic_coeffs)
+    roots = jnp.roots(cubic_coeffs, strip_zeros=False)
     real_roots = jnp.real(roots)
     root_distances = jnp.abs(roots)
 
@@ -95,12 +98,12 @@ def _closest_quartic_local_minimum(coefficients: jnp.ndarray) -> Array:
 
 def exact_linesearch_intensity_loss(
     x: jnp.ndarray,
-    scale_factor: ArrayLike,
     search_direction: jnp.ndarray,
     weighting_vector: jnp.ndarray,
     y: jnp.ndarray,
     phase_ref_point: Tuple[int, int],
-    phase_weight: ArrayLike,
+    scale_factor: ArrayLike = 1.0 / 8.0,
+    phase_weight: ArrayLike = 1.0,
     first_minimum: bool = False,
 ) -> Array:
     """
@@ -113,7 +116,39 @@ def exact_linesearch_intensity_loss(
     phase_coefficients = polynomial_phase_loss_coefficients(
         x, search_direction, phase_ref_point, phase_weight
     )
-    coefficients = coefficients.at[3:].add(phase_coefficients)
+    coefficients = coefficients.at[2:].add(phase_coefficients)
+    root = lax.cond(
+        first_minimum,
+        _closest_quartic_local_minimum,
+        _exact_quartic_minimizer,
+        coefficients,
+    )
+    return root
+
+
+def exact_linesearch_intensity_loss_flat_real(
+    x: jnp.ndarray,
+    search_direction: jnp.ndarray,
+    weighting_vector: jnp.ndarray,
+    xshape: Tuple,
+    y: jnp.ndarray,
+    phase_ref_point: Tuple[int, int],
+    scale_factor: ArrayLike = 1.0 / 8.0,
+    phase_weight: ArrayLike = 1.0,
+    first_minimum: bool = False,
+) -> Array:
+    """
+    Computes exact linesearch for intensity loss function.
+    """
+    x = view_as_complex(x, xshape)
+    search_direction = view_as_complex(search_direction, xshape)
+    coefficients = polynomial_base_loss_coefficients(
+        x, scale_factor, search_direction, weighting_vector, y
+    )
+    phase_coefficients = polynomial_phase_loss_coefficients(
+        x, search_direction, phase_ref_point, phase_weight
+    )
+    coefficients = coefficients.at[2:].add(phase_coefficients)
     root = lax.cond(
         first_minimum,
         _closest_quartic_local_minimum,

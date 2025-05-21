@@ -89,7 +89,7 @@ def schwarz_transform(y, winding_tuple, support_shape):
     cep_mask = jnp.zeros_like(cepstrum)
     fft_freqs_axis0 = jnp.fft.fftfreq(y.shape[0], d=1.0 / y.shape[0])
     fft_freqs_axis1 = jnp.fft.fftfreq(y.shape[1], d=1.0 / y.shape[1])
-    x_grid, y_grid = jnp.meshgrid(fft_freqs_axis0, fft_freqs_axis1, indexing="xy")
+    x_grid, y_grid = jnp.meshgrid(fft_freqs_axis0, fft_freqs_axis1, indexing="ij")
 
     cep_mask = cep_mask.at[0 : y.shape[0] // 2, 0 : y.shape[1] // 2].set(1)
     cep_mask = cep_mask.at[

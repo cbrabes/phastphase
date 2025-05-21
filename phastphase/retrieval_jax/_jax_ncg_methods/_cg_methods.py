@@ -12,7 +12,7 @@ import jax
 import jax.experimental
 import jax.experimental.sparse
 import jax.numpy as jnp
-from jax import lax
+from jax import Array, lax
 from jax.tree_util import Partial
 from jax.typing import ArrayLike
 
@@ -350,7 +350,6 @@ def _curved_newton_cg_step(
     state: _CurvedNewtonCGState,
     hvp_func: Callable,
     preconditioner: Callable,
-    rhs: jnp.ndarray,
     norm_target: ArrayLike,
     max_iters: int,
 ) -> _CurvedNewtonCGState:
@@ -362,20 +361,20 @@ def _curved_newton_cg_step(
 
     # Compute the step length
     alpha = _dot(state.rk, state.yk) / _dot(state.pk, hess_p)
-
     xk_new = state.xk + alpha * state.pk
     rk_new = state.rk + alpha * hess_p
     yk_new = preconditioner(rk_new)
     beta = _dot(rk_new, yk_new) / _dot(state.rk, state.yk)
+
     pk_new = -yk_new + beta * state.pk
-    p_negative_curvature = jnp.less(_dot(state.pk, hess_p), 0)
+    p_negative_curvature = jnp.less_equal(_dot(state.pk, hess_p), 0)
     residual_converged = jnp.less_equal(jnp.linalg.vector_norm(rk_new), norm_target)
 
     use_p = jnp.logical_and(
         jnp.logical_not(residual_converged),
         p_negative_curvature,
     )
-    new_search_direction = lax.select(use_p, state.pk, state.xk)
+    new_search_direction = lax.select(use_p, state.pk, xk_new)
     new_termination_status = jnp.where(
         residual_converged,
         RESIDUAL_CONVERGED,
@@ -403,11 +402,18 @@ def _curved_newton_cg_cond(state: _CurvedNewtonCGState) -> ArrayLike:
     return jnp.logical_not(state.converged)
 
 
+def identity_preconditioner(x: jnp.ndarray) -> jnp.ndarray:
+    """
+    Identity preconditioner.
+    """
+    return x
+
+
 def curved_newton_cg_method(
     hessvp: Callable,
-    preconditioner: Callable,
     gradient: jnp.ndarray,
     max_iters: int,
+    preconditioner: Callable = identity_preconditioner,
 ) -> _CurvedNewtonCGState:
     """
     Curved Newton-CG method for solving the trust region subproblem.
@@ -429,10 +435,80 @@ def curved_newton_cg_method(
         _curved_newton_cg_step,
         hvp_func=hessvp,
         preconditioner=preconditioner,
-        norm_target=jnp.fmin(0.5, jnp.sqrt(jnp.linalg.vector_norm(gradient))),
+        norm_target=jnp.linalg.vector_norm(gradient)
+        * jnp.fmin(0.5, jnp.linalg.vector_norm(gradient)),
         max_iters=max_iters,
     )
     final_state: _CurvedNewtonCGState = lax.while_loop(
         _curved_newton_cg_cond, _curved_body_fun, init_state
+    )
+    return final_state
+
+
+class _CGState(NamedTuple):
+    xk: jnp.ndarray
+    rk: jnp.ndarray
+    pk: jnp.ndarray
+    iter_number: ArrayLike
+
+
+def _cg_step(state: _CGState, A: Callable) -> _CGState:
+    """
+    Perform a single step of the Conjugate Gradient method.
+    """
+    # Compute the Hessian-vector product
+    hess_p = A(state.pk)
+    # Compute the step length
+    alpha = _dot(state.rk, state.rk) / _dot(state.pk, hess_p)
+    xk_new = state.xk + alpha * state.pk
+    rk_new = state.rk - alpha * hess_p
+    beta = _dot(rk_new, rk_new) / _dot(state.rk, state.rk)
+    pk_new = -rk_new + beta * state.pk
+    new_iter_number = state.iter_number + 1
+    return _CGState(
+        xk=xk_new,
+        rk=rk_new,
+        pk=pk_new,
+        iter_number=new_iter_number,
+    )
+
+
+def _cg_cond(state: _CGState, max_iters: ArrayLike, tolerance: ArrayLike) -> Array:
+    not_converged = jnp.less(state.iter_number, max_iters)
+    not_converged = jnp.logical_and(
+        not_converged, jnp.greater(jnp.linalg.vector_norm(state.rk), tolerance)
+    )
+    return not_converged
+
+
+def cg_method(
+    A: Callable,
+    rhs: jnp.ndarray,
+    max_iters: int,
+    rel_tolerance: float,
+    abs_tolerance: float,
+) -> _CGState:
+    """
+    Conjugate Gradient method for solving the linear system Ax = b.
+
+    Tolerance sets the following condition:
+
+    ||rk||_2< min(rel_tolerance * ||b||_2, abs_tolerance)
+    """
+    r0 = rhs
+    p0 = r0
+    init_state = _CGState(
+        xk=jnp.zeros_like(rhs),
+        rk=r0,
+        pk=p0,
+        iter_number=jnp.array(0),
+    )
+    min_tolerance = jnp.fmin(rel_tolerance * jnp.linalg.vector_norm(rhs), abs_tolerance)
+    _cg_body_fun = Partial(_cg_step, A=A)
+    _cg_cond_fun = Partial(_cg_cond, max_iters=max_iters, tolerance=min_tolerance)
+    final_state = lax.while_loop(
+        _cg_cond_fun,
+        _cg_body_fun,
+        init_state,
     )
     return final_state
