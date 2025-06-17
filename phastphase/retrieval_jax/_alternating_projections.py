@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-from ._loss_funcs import normalized_intensity_loss
+from ._loss_funcs import normalized_intensity_loss, sqrt_intensity_loss
 
 
 class _HIOState(NamedTuple):
@@ -26,11 +26,11 @@ def _HIO_projection_step(
         jax.typing.ArrayLike: The projected array.
     """
     # Apply the HIO projection step
-    y_c = jnp.fft.fft2(state.x)
+    y_c = jnp.fft.fft2(state.x, norm="ortho")
     y_c = jnp.sign(y_c) * jnp.sqrt(y)
-    x_new = jnp.fft.ifft2(y_c)
+    x_new = jnp.fft.ifft2(y_c, norm="ortho")
     x_new = mask * (x_new) + (1 - mask) * (state.x - beta * x_new)
-    residual = normalized_intensity_loss(mask * x_new, y)
+    residual = sqrt_intensity_loss(mask * x_new, y)
     return _HIOState(x=x_new, iteration=state.iteration + 1, residual=residual)
 
 
@@ -97,7 +97,10 @@ def HIO(
     initial_state = _HIOState(
         x=x0,
         iteration=0,
-        residual=jnp.linalg.norm(jnp.square(jnp.abs(jnp.fft.fft2(mask * x0))) - y),
+        residual=jnp.linalg.norm(
+            (jnp.square(jnp.abs(jnp.fft.fft2(mask * x0, norm="ortho"))) - y)
+            / jnp.sqrt(y + 1e-12)
+        ),
     )
     final_state = lax.while_loop(HIO_cond_func, HIO_step_func, initial_state)
 
@@ -124,11 +127,11 @@ def _damped_ER_projection_step(
         _DampedERState: The updated state after applying the ER projection step.
     """
     # Apply the ER projection step
-    y_c = jnp.fft.fft2(state.x)
+    y_c = jnp.fft.fft2(state.x, norm="ortho")
     y_c = far_field_damping * y_c + (1 - far_field_damping) * jnp.sqrt(y) * jnp.sign(
         y_c
     )  # enforce magnitude
-    x_new = jnp.fft.ifft2(y_c)
+    x_new = jnp.fft.ifft2(y_c, norm="ortho")
 
     # Apply damping factors
     x_new = mask * x_new + (1 - mask) * (near_field_damping * x_new)

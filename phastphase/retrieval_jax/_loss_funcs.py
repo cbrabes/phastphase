@@ -21,6 +21,12 @@ def normalized_intensity_loss(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     )
 
 
+def sqrt_intensity_loss(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+    return jnp.linalg.norm(
+        (jnp.square(jnp.abs(jnp.fft.fft2(x))) - y) / jnp.sqrt(y + 1e-12)
+    )
+
+
 def intensity_loss(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     """Compute the intensity loss between the Fourier transform of x and y.
 

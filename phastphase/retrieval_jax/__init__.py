@@ -14,6 +14,12 @@ from ._retrieval_jax import (
     view_as_complex,
     view_as_flat_real,
 )
+from .alternative_methods._gradient_flows import (
+    amplitude_flow,
+    truncated_amplitude_flow,
+    truncated_wirtinger_flow,
+    wirtinger_flow,
+)
 
 __all__ = [
     "L2_mag_loss",
@@ -29,4 +35,8 @@ __all__ = [
     "mat_free_replace_negative_intensities",
     "HIO",
     "damped_ER",
+    "amplitude_flow",
+    "truncated_amplitude_flow",
+    "wirtinger_flow",
+    "truncated_wirtinger_flow",
 ]
