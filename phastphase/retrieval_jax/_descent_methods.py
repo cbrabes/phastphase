@@ -10,15 +10,15 @@ from ._linesearch import exact_linesearch_intensity_loss
 from ._loss_funcs import view_as_complex, view_as_flat_real, weighted_intensity_loss
 
 
-class _LBFGSState(NamedTuple):
+class _OptaxState(NamedTuple):
     opt_state: optax.OptState
     opt_params: jnp.ndarray
     iteration: int
     grad_norm: float
 
 
-def _lbfgs_cond_func(
-    state: _LBFGSState, abs_tol: float, rel_tol: float, max_iters: int, g0: float
+def _optax_min_cond(
+    state: _OptaxState, abs_tol: float, rel_tol: float, max_iters: int, g0: float
 ) -> jnp.ndarray:
     """Condition function for the LBFGS loop."""
     return jnp.logical_and(
@@ -30,15 +30,15 @@ def _lbfgs_cond_func(
     )
 
 
-def _lbfgs_step(
-    state: _LBFGSState,
+def _optax_min_step(
+    state: _OptaxState,
     cost_function: Callable,
     value_and_grad: Callable,
-    lbfgs_solver: optax.GradientTransformationExtraArgs,
-) -> _LBFGSState:
+    optax_solver: optax.GradientTransformationExtraArgs,
+) -> _OptaxState:
     """Perform a single step of the LBFGS optimization algorithm."""
     value, grad = value_and_grad(state.opt_params, state=state.opt_state)
-    updates, new_opt_state = lbfgs_solver.update(
+    updates, new_opt_state = optax_solver.update(
         grad,
         state.opt_state,
         state.opt_params,
@@ -47,7 +47,7 @@ def _lbfgs_step(
         value_fn=cost_function,
     )
     new_params = optax.apply_updates(state.opt_params, updates)
-    return _LBFGSState(
+    return _OptaxState(
         opt_state=new_opt_state,
         opt_params=new_params,
         iteration=state.iteration + 1,
@@ -58,41 +58,31 @@ def _lbfgs_step(
 def lbfgs_minimize(
     cost_function: Callable,
     x_0: jnp.ndarray,
-    max_itertaions: int,
+    max_iters: int,
     rtol: float = 1e-5,
     atol: float = 1e-15,
-) -> _LBFGSState:
+) -> _OptaxState:
     """Optimize a function using the LBFGS algorithm."""
     solver = optax.lbfgs()
     value_and_grad = optax.value_and_grad_from_state(cost_function)
     g0 = jnp.linalg.norm(value_and_grad(x_0, state=solver.init(x_0))[1])
-    state = _LBFGSState(
+    state = _OptaxState(
         opt_state=solver.init(x_0),
         opt_params=x_0,
         iteration=0,
         grad_norm=g0,
     )
     cond_func = jax.tree_util.Partial(
-        _lbfgs_cond_func, abs_tol=atol, rel_tol=rtol, max_iters=max_itertaions, g0=g0
+        _optax_min_cond, abs_tol=atol, rel_tol=rtol, max_iters=max_iters, g0=g0
     )
     step_func = jax.tree_util.Partial(
-        _lbfgs_step,
+        _optax_min_step,
         cost_function=cost_function,
         value_and_grad=value_and_grad,
-        lbfgs_solver=solver,
+        optax_solver=solver,
     )
     final_state = lax.while_loop(cond_func, step_func, state)
     return final_state
-
-
-def lbfgs_saddlepoint_escape(
-    cost_function: Callable,
-    x_0: jnp.ndarray,
-    max_itertaions: int,
-    rtol: float = 1e-5,
-    atol: float = 1e-15,
-):
-    """Optimize a function using a compound LBFGS/ Newton method."""
 
 
 class _ExactLSGradState(NamedTuple):

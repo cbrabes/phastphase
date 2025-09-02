@@ -5,7 +5,7 @@ setup.py - this module makes the package installable
 from setuptools import setup
 
 NAME = "phastphase"
-VERSION = "0.0.87"
+VERSION = "0.0.89"
 DEPENDENCIES = ["numpy", "pytorch-minimize", "jax"]
 DESCRIPTION = (
     "Accurate solution to the phase retrieval problem for near-Schwarz objects."
