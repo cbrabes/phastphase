@@ -186,7 +186,10 @@ def damped_ER(
     initial_state = _HIOState(
         x=x0,
         iteration=0,
-        residual=jnp.linalg.norm(jnp.square(jnp.abs(jnp.fft.fft2(mask * x0))) - y),
+        residual=jnp.linalg.norm(
+            (jnp.square(jnp.abs(jnp.fft.fft2(mask * x0, norm="ortho"))) - y)
+            / jnp.sqrt(y + 1e-12)
+        ),
     )
     final_state = lax.while_loop(
         damped_ER_cond_func, damped_ER_step_func, initial_state
