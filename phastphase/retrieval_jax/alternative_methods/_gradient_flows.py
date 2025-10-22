@@ -146,7 +146,7 @@ def truncated_amplitude_loss(
         jnp.fft.fft2(x, s=target_amplitudes.shape, norm="ortho")
     )
     weight = jnp.where(
-        observed_amplitudes >= (1 / (1 + truncation_threshold)) * target_amplitudes,
+        observed_amplitudes >= (1 / (1.0 + truncation_threshold)) * target_amplitudes,
         1.0,
         0.0,
     )
@@ -155,6 +155,7 @@ def truncated_amplitude_loss(
     )
 
 
+@jax.jit
 def truncated_amplitude_flow(
     x_0,
     far_field_intensities,

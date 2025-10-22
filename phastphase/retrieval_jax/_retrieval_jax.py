@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Optional, Tuple
 
 import jax
@@ -36,6 +37,7 @@ TRUST_REGION_CG: int = 0
 LBFGS: int = 1
 
 
+@jax.jit
 def retrieve(
     far_field_intensities: jax.typing.ArrayLike,  # Magnitude squared of fourier transform
     support_mask: jax.typing.ArrayLike,  # Support mask
@@ -62,7 +64,9 @@ def retrieve(
         ff_mask = far_field_mask
 
     offset_intensities = far_field_intensities + offset
-    x_schwarz = schwarz_transform(offset_intensities, winding_number, support_shape)
+    x_schwarz = fast_schwarz_transform(
+        offset_intensities, winding_number, support_shape
+    )
 
     return refine(
         x_schwarz,
@@ -80,8 +84,18 @@ def retrieve(
     )
 
 
-def winding_calc(far_field_intensities, support_shape):
-    return None
+def winding_calc(
+    far_field_intensities: jnp.ndarray, support_mask: jnp.ndarray
+) -> Tuple[jax.typing.ArrayLike, ...]:
+    autocorr = jnp.fft.ifft2(far_field_intensities)
+    autocorr_mag = jnp.abs(autocorr)
+    convolution = jnp.fft.ifft2(
+        jnp.fft.fft2(autocorr_mag) * jnp.fft.fft2(support_mask, s=autocorr_mag.shape)
+    )
+    convolution_mag = jnp.abs(convolution)
+
+    max_loc = jnp.unravel_index(jnp.argmax(convolution_mag), convolution_mag.shape)
+    return max_loc
 
 
 def schwarz_transform(y, winding_tuple, support_shape):
@@ -106,6 +120,32 @@ def schwarz_transform(y, winding_tuple, support_shape):
     x_cep = jnp.fft.ifft2(jnp.exp(jnp.fft.fft2(rolled_mask * cepstrum)), norm="ortho")
     x_rolled = jnp.roll(x_cep, winding_tuple, (0, 1))
     x_unphased = lax.slice(x_rolled, (0, 0), support_shape)
+    x_unphased = x_unphased / jnp.sign(x_unphased[*winding_tuple])
+    return x_unphased
+
+
+def fast_schwarz_transform(y, winding_tuple, support_shape):
+    cepstrum = jnp.fft.ifft2(jnp.log(y))
+    cep_shape = cepstrum.shape
+    index_grid = jnp.indices(cep_shape)
+    i_indices = index_grid[0, :, :]
+    j_indices = index_grid[1, :, :]
+    mask_winding = jnp.logical_and(
+        jnp.less(i_indices, 2 * winding_tuple[0] + 1),
+        jnp.less(j_indices, 2 * winding_tuple[1] + 1),
+    )
+    mask_trim = jnp.logical_and(
+        jnp.less(i_indices, cep_shape[0] // 2), jnp.less(j_indices, cep_shape[1] // 2)
+    )
+    cepstrum = cepstrum.at[0, 0].multiply(0.5)
+    cepstrum = jnp.roll(cepstrum, (2 * winding_tuple[0], 2 * winding_tuple[1]), (0, 1))
+    cepstrum = jnp.where(mask_winding, cepstrum * 0.5, cepstrum)
+    cepstrum = jnp.roll(cepstrum, (-winding_tuple[0], -winding_tuple[1]), (0, 1))
+    cepstrum = jnp.where(mask_trim, cepstrum, 0.0)
+    cepstrum = jnp.roll(cepstrum, (-winding_tuple[0], -winding_tuple[1]), (0, 1))
+    x_cep = jnp.fft.ifft2(jnp.exp(jnp.fft.fft2(cepstrum)), norm="ortho")
+    x_rolled = jnp.roll(x_cep, winding_tuple, (0, 1))
+    x_unphased = x_rolled[0 : support_shape[0], 0 : support_shape[1]]
     x_unphased = x_unphased / jnp.sign(x_unphased[*winding_tuple])
     return x_unphased
 
@@ -208,7 +248,7 @@ def refine(
 
     def minimize_lbfgs(dummy=None):
         result = lbfgs_minimize(
-            scaled_loss, x0, max_itertaions=max_iters, rtol=grad_tolerance
+            scaled_loss, x0, max_iters=max_iters, rtol=grad_tolerance
         )
         x_c = view_as_complex(result.opt_params, support_shape)
         return (x_c, scaled_loss(result.opt_params))

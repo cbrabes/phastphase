@@ -13,6 +13,7 @@ from ._retrieval_jax import (
     retrieve,
     view_as_complex,
     view_as_flat_real,
+    winding_calc,
 )
 from .alternative_methods._gradient_flows import (
     amplitude_flow,
