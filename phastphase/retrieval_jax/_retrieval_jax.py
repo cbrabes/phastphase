@@ -1,13 +1,14 @@
 from functools import partial
 from typing import Optional, Tuple
 
+from tqdm import tqdm
+
 import jax
 import jax.lax as lax
 import jax.numpy as jnp
 
 from ._descent_methods import lbfgs_minimize
 from ._trust_region import minimize_trust_region
-
 
 def view_as_flat_real(x):
     r = lax.expand_dims(jnp.real(x), [2])
@@ -41,7 +42,7 @@ LBFGS: int = 1
 def retrieve(
     far_field_intensities: jax.typing.ArrayLike,  # Magnitude squared of fourier transform
     support_mask: jax.typing.ArrayLike,  # Support mask
-    winding_guess=(0, 0),  # Guess for the winding number
+    winding_guess=None,  # Guess for the winding number
     offset: float = 1e-14,  # Value to offset y to ensure it is positive
     scale_gradient: bool = False,  # Whether to scale the loss funciton such that the initial infinity norm of the gradient is no more than 1
     max_iters: int = 100,  # Maximum Iterations for use in minimization
@@ -54,7 +55,6 @@ def retrieve(
     loss_type=L2_MAG_LOSS,
     descent_method=LBFGS,
 ) -> Tuple[jax.Array, float]:  # Loss Type
-    winding_number = winding_guess
     mask = support_mask
     support_shape = mask.shape
 
@@ -64,8 +64,15 @@ def retrieve(
         ff_mask = far_field_mask
 
     offset_intensities = far_field_intensities + offset
+    cepstrum = jnp.fft.ifft2(jnp.log(offset_intensities))
+
+    if winding_guess is None:
+        winding_number = winding_calc(support_mask, offset_intensities, cepstrum)
+    else:
+        winding_number = winding_guess
+
     x_schwarz = fast_schwarz_transform(
-        offset_intensities, winding_number, support_shape
+        cepstrum, winding_number, support_shape
     )
 
     return refine(
@@ -85,6 +92,12 @@ def retrieve(
 
 
 def winding_calc(
+    support_mask: jnp.ndarray, far_field_intensities: jnp.ndarray, cepstrum: jnp.ndarray
+) -> Tuple[jax.typing.ArrayLike, ...]:
+    return iterative_winding_calc(support_shape=support_mask.shape, cepstrum=cepstrum)
+
+
+def convolution_winding_calc(
     far_field_intensities: jnp.ndarray, support_mask: jnp.ndarray
 ) -> Tuple[jax.typing.ArrayLike, ...]:
     autocorr = jnp.fft.ifft2(far_field_intensities)
@@ -98,14 +111,90 @@ def winding_calc(
     return max_loc
 
 
-def schwarz_transform(y, winding_tuple, support_shape):
-    cepstrum = jnp.fft.ifft2(jnp.log(y))
+def last_nonzero_index(data: jnp.ndarray, axis: int) -> int:
+    return jnp.where(jnp.heaviside(data,0))[axis].max(initial=0)
+
+
+def iterative_winding_calc_single_axis(
+    support_shape: tuple[int, ...],
+    wrap_section_shape: tuple[int, ...], 
+    cepstrum: jnp.ndarray, 
+    main_quadrant: jnp.ndarray,
+    axis: int,
+    num_loops: int = 100,
+    verbose: bool = False
+) -> int:
+    support_len = support_shape[axis]
+    cepstrum_high = jnp.max(jnp.abs(cepstrum))
+    cepstrum_low = jnp.min(jnp.abs(cepstrum))
+    wrap_section = jnp.abs(cepstrum[wrap_section_shape])
+
+    iterator = range(num_loops)
+    if verbose: iterator = tqdm(iterator, desc="Axis winding")
+
+    for _ in iterator:
+        threshhold = (cepstrum_high+cepstrum_low)/2.
+
+        wraparound_last_nonzero = last_nonzero_index(wrap_section - threshhold, axis=axis)
+        main_last_nonzero = last_nonzero_index(main_quadrant - threshhold, axis=axis)
+        length = (wraparound_last_nonzero + main_last_nonzero + 1)
+
+        winding_num = wraparound_last_nonzero
+
+        if length > support_len:
+            cepstrum_low = threshhold
+        elif length < support_len:
+            cepstrum_high = threshhold
+        elif length == support_len:
+            break
+
+    return winding_num
+
+
+def iterative_winding_calc(
+    support_shape: tuple[int, ...],
+    cepstrum: jnp.ndarray,
+    num_loops: int = 100,
+    verbose: bool = False
+) -> tuple[int]:
+    n = support_shape[0]
+    m = support_shape[1]
+
+    upper_right_corner_slice = (slice(0, n//2), slice(-m,-m//2+1))
+    bottom_left_corner_slice = (slice(-n, -n//2+1), slice(0, m//2+1))
+
+    main_quadrant = jnp.abs(cepstrum[0:n,0:m])
+
+    x_winding_number = iterative_winding_calc_single_axis(
+        support_shape=support_shape,
+        wrap_section_shape=upper_right_corner_slice,
+        cepstrum=cepstrum,
+        main_quadrant=main_quadrant,
+        axis=0,
+        num_loops=num_loops,
+        verbose=verbose
+    )
+
+    y_winding_number = iterative_winding_calc_single_axis(
+        support_shape=support_shape,
+        wrap_section_shape=bottom_left_corner_slice,
+        cepstrum=cepstrum,
+        main_quadrant=main_quadrant,
+        axis=1,
+        num_loops=num_loops,
+        verbose=verbose
+    )
+
+    return (x_winding_number, y_winding_number)
+
+
+def schwarz_transform(cepstrum, winding_tuple, support_shape):
     cep_mask = jnp.zeros_like(cepstrum)
-    fft_freqs_axis0 = jnp.fft.fftfreq(y.shape[0], d=1.0 / y.shape[0])
-    fft_freqs_axis1 = jnp.fft.fftfreq(y.shape[1], d=1.0 / y.shape[1])
+    fft_freqs_axis0 = jnp.fft.fftfreq(cepstrum.shape[0], d=1.0 / cepstrum.shape[0])
+    fft_freqs_axis1 = jnp.fft.fftfreq(cepstrum.shape[1], d=1.0 / cepstrum.shape[1])
     x_grid, y_grid = jnp.meshgrid(fft_freqs_axis0, fft_freqs_axis1, indexing="ij")
 
-    cep_mask = cep_mask.at[0 : y.shape[0] // 2, 0 : y.shape[1] // 2].set(1)
+    cep_mask = cep_mask.at[0 : cepstrum.shape[0] // 2, 0 : cepstrum.shape[1] // 2].set(1)
     cep_mask = cep_mask.at[
         0 : 2 * winding_tuple[0] + 1, 0 : 2 * winding_tuple[1] + 1
     ].set(0.5)
@@ -124,8 +213,7 @@ def schwarz_transform(y, winding_tuple, support_shape):
     return x_unphased
 
 
-def fast_schwarz_transform(y, winding_tuple, support_shape):
-    cepstrum = jnp.fft.ifft2(jnp.log(y))
+def fast_schwarz_transform(cepstrum, winding_tuple, support_shape):
     cep_shape = cepstrum.shape
     index_grid = jnp.indices(cep_shape)
     i_indices = index_grid[0, :, :]

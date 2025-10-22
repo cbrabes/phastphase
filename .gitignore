@@ -18,6 +18,7 @@
 *.gz
 *.log
 *.asv
+*.egg
 
 # data
 *.mat
