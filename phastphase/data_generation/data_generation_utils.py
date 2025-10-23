@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import cv2 as cv
 import jax
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 import zernike
@@ -146,3 +147,31 @@ def image_with_random_zernike_phase(filename, size):
     combined_map = np.sqrt(intensity) * np.exp(1j * phase_map)
     
     return phase_map, combined_map
+
+
+def add_gaussian_spot(image, x0=None, y0=None, sigma=None, amplitude=None, normalize=True):
+    """
+    Add a Gaussian bright spot to a 2D image.
+    - image: 2D numpy array (float), intensity-like (non-negative).
+    - x0, y0: spot center in pixel coordinates (cols, rows).
+    - sigma: standard deviation in pixels.
+    - amplitude: peak additional intensity (same units as image).
+    - normalize: if True, clip image to non-negative after adding.
+    Returns new image (copy).
+    """
+    H, W = image.shape
+
+    x0 = x0 if x0 is not None else random.randrange(0, H)
+    y0 = y0 if y0 is not None else random.randrange(0, W)
+    sigma = sigma if sigma is not None else np.random.uniform(2.0, 10.0)
+    amplitude = amplitude if amplitude is not None else np.random.uniform(0.5, 3.0)
+
+    yy = np.arange(H)[:, None]
+    xx = np.arange(W)[None, :]
+    g = np.exp(-((xx - x0)**2 + (yy - y0)**2) / (2 * sigma**2))
+    g *= amplitude  # peak = amplitude
+    out = image.astype(float).copy()
+    out += g
+    if normalize:
+        out = np.clip(out, 0, None)
+    return out
