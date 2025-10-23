@@ -53,7 +53,7 @@ def retrieve(
         jax.typing.ArrayLike
     ] = None,  # Far field mask for cropped far_fields
     loss_type=L2_MAG_LOSS,
-    descent_method=LBFGS,
+    descent_method=LBFGS
 ) -> Tuple[jax.Array, float]:  # Loss Type
     mask = support_mask
     support_shape = mask.shape
@@ -66,10 +66,18 @@ def retrieve(
     offset_intensities = far_field_intensities + offset
     cepstrum = jnp.fft.ifft2(jnp.log(offset_intensities))
 
-    if winding_guess is None:
-        winding_number = winding_calc(support_mask, offset_intensities, cepstrum)
-    else:
-        winding_number = winding_guess
+    # Required to ensure both lambda functions have the same return type,
+    # it is not smart enough to understand that if the false lambda is executed, winding_guess will never be None.
+    winding_guess_jax = (0, 0) if winding_guess is None else winding_guess
+
+    winding_number = lax.cond(
+        winding_guess is None,
+        lambda _: winding_calc(support_mask, offset_intensities, cepstrum),
+        lambda _: winding_guess_jax,
+        operand=None
+    )
+
+    jax.debug.print("Using winding numbers: ({wind_x}, {wind_y})", wind_x = winding_number[0], wind_y = winding_number[1])
 
     x_schwarz = fast_schwarz_transform(
         cepstrum, winding_number, support_shape
@@ -92,7 +100,9 @@ def retrieve(
 
 
 def winding_calc(
-    support_mask: jnp.ndarray, far_field_intensities: jnp.ndarray, cepstrum: jnp.ndarray
+    support_mask: jnp.ndarray, 
+    far_field_intensities: jnp.ndarray,
+    cepstrum: jnp.ndarray
 ) -> Tuple[jax.typing.ArrayLike, ...]:
     return iterative_winding_calc(support_shape=support_mask.shape, cepstrum=cepstrum)
 
@@ -112,7 +122,7 @@ def convolution_winding_calc(
 
 
 def last_nonzero_index(data: jnp.ndarray, axis: int) -> int:
-    return jnp.where(jnp.heaviside(data,0))[axis].max(initial=0)
+    return jnp.where(jnp.heaviside(data,0), size=data.size)[axis].max(initial=0)
 
 
 def iterative_winding_calc_single_axis(
@@ -121,32 +131,37 @@ def iterative_winding_calc_single_axis(
     cepstrum: jnp.ndarray, 
     main_quadrant: jnp.ndarray,
     axis: int,
-    num_loops: int = 100,
-    verbose: bool = False
+    num_loops: int = 100
 ) -> int:
     support_len = support_shape[axis]
-    cepstrum_high = jnp.max(jnp.abs(cepstrum))
-    cepstrum_low = jnp.min(jnp.abs(cepstrum))
+    init_cepstrum_high = jnp.max(jnp.abs(cepstrum))
+    init_cepstrum_low = jnp.min(jnp.abs(cepstrum))
     wrap_section = jnp.abs(cepstrum[wrap_section_shape])
 
-    iterator = range(num_loops)
-    if verbose: iterator = tqdm(iterator, desc="Axis winding")
+    def loop_body(i, state):
+        curr_cepstrum_high, curr_cepstrum_low, curr_winding_num, curr_done = state
+        
+        def loop_step(_):
+            threshhold = (curr_cepstrum_high+curr_cepstrum_low)/2.
 
-    for _ in iterator:
-        threshhold = (cepstrum_high+cepstrum_low)/2.
+            wraparound_last_nonzero = last_nonzero_index(wrap_section - threshhold, axis=axis)
+            main_last_nonzero = last_nonzero_index(main_quadrant - threshhold, axis=axis)
+            length = (wraparound_last_nonzero + main_last_nonzero + 1)
+        
+            next_cepstrum_high = lax.cond(length < support_len, lambda _: threshhold, lambda _: curr_cepstrum_high, operand=None)
+            next_cepstrum_low = lax.cond(length > support_len, lambda _: threshhold, lambda _: curr_cepstrum_low, operand=None)
+            next_winding_num = wraparound_last_nonzero
+            next_done = (length == support_len)
 
-        wraparound_last_nonzero = last_nonzero_index(wrap_section - threshhold, axis=axis)
-        main_last_nonzero = last_nonzero_index(main_quadrant - threshhold, axis=axis)
-        length = (wraparound_last_nonzero + main_last_nonzero + 1)
+            return (next_cepstrum_high, next_cepstrum_low, next_winding_num, next_done)
 
-        winding_num = wraparound_last_nonzero
+        return lax.cond(curr_done, lambda _: state, loop_step, operand=None)
+    
+    # Initialize state variables
+    init_state = (init_cepstrum_high, init_cepstrum_low, 0, False)
 
-        if length > support_len:
-            cepstrum_low = threshhold
-        elif length < support_len:
-            cepstrum_high = threshhold
-        elif length == support_len:
-            break
+    # Execute for loop
+    final_high, final_low, winding_num, done = lax.fori_loop(0, num_loops, loop_body, init_state)
 
     return winding_num
 
@@ -154,8 +169,7 @@ def iterative_winding_calc_single_axis(
 def iterative_winding_calc(
     support_shape: tuple[int, ...],
     cepstrum: jnp.ndarray,
-    num_loops: int = 100,
-    verbose: bool = False
+    num_loops: int = 100
 ) -> tuple[int]:
     n = support_shape[0]
     m = support_shape[1]
@@ -171,8 +185,7 @@ def iterative_winding_calc(
         cepstrum=cepstrum,
         main_quadrant=main_quadrant,
         axis=0,
-        num_loops=num_loops,
-        verbose=verbose
+        num_loops=num_loops
     )
 
     y_winding_number = iterative_winding_calc_single_axis(
@@ -181,8 +194,7 @@ def iterative_winding_calc(
         cepstrum=cepstrum,
         main_quadrant=main_quadrant,
         axis=1,
-        num_loops=num_loops,
-        verbose=verbose
+        num_loops=num_loops
     )
 
     return (x_winding_number, y_winding_number)
