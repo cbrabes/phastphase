@@ -159,15 +159,15 @@ def generate_zernike_phase_map(shape, max_j=20, decay=0.1, strength=np.pi, apera
     return phase_map
 
 
-def image_with_random_phase_map(filename, size, decay=0.1, strength=np.pi, aperature="circular"):
+def image_with_random_phase_map(filename, shape, decay=0.1, strength=np.pi, aperature="circular"):
     # Load image as near field intensity
     image = cv.imread(filename, cv.IMREAD_GRAYSCALE)
-    image = cv.resize(image,(size,size))
+    image = cv.resize(image, shape)
     intensity = np.asarray(image)
     intensity = intensity / np.max(intensity)
 
     # Generate phase map
-    phase_map = generate_zernike_phase_map(size, decay=decay, strength=strength, aperature=aperature)
+    phase_map = generate_zernike_phase_map(shape, decay=decay, strength=strength, aperature=aperature)
 
     # Combine into complex field
     combined_map = np.sqrt(intensity) * np.exp(1j * phase_map)
@@ -175,14 +175,33 @@ def image_with_random_phase_map(filename, size, decay=0.1, strength=np.pi, apera
     return phase_map, combined_map
 
 
-def add_gaussian_spot(image, x0=None, y0=None, sigma=None, amplitude=None, normalize=True):
+def add_heaviside_spot(image, x0=None, y0=None, radius=None, amplitude_multiplier=None):
+    H, W = image.shape
+
+    x0 = x0 if x0 is not None else random.randrange(0, H)
+    y0 = y0 if y0 is not None else random.randrange(0, W)
+    radius = radius if radius is not None else random.randrange(0, 10)
+    amplitude_multiplier = amplitude_multiplier if amplitude_multiplier is not None else np.random.uniform(0.5, 2.0)
+
+    total_image_intensity = np.sum(image)
+    amplitude = total_image_intensity * amplitude_multiplier
+
+    yy = np.arange(H)[:, None]
+    xx = np.arange(W)[None, :]
+
+    spot_map = np.zeros((H, W), dtype=float)
+    dist = np.sqrt((xx - x0)**2 + (yy - y0)**2)
+    spot_map[dist <= radius] += amplitude
+    image += spot_map
+
+
+def add_gaussian_spot(image, x0=None, y0=None, sigma=None, amplitude_multiplier=None):
     """
     Add a Gaussian bright spot to a 2D image.
     - image: 2D numpy array (float), intensity-like (non-negative).
     - x0, y0: spot center in pixel coordinates (cols, rows).
     - sigma: standard deviation in pixels.
     - amplitude: peak additional intensity (same units as image).
-    - normalize: if True, clip image to non-negative after adding.
     Returns new image (copy).
     """
     H, W = image.shape
@@ -190,14 +209,13 @@ def add_gaussian_spot(image, x0=None, y0=None, sigma=None, amplitude=None, norma
     x0 = x0 if x0 is not None else random.randrange(0, H)
     y0 = y0 if y0 is not None else random.randrange(0, W)
     sigma = sigma if sigma is not None else np.random.uniform(2.0, 10.0)
-    amplitude = amplitude if amplitude is not None else np.random.uniform(0.5, 3.0)
+    amplitude_multiplier = amplitude_multiplier if amplitude_multiplier is not None else np.random.uniform(0.5, 2.0)
+
+    total_image_intensity = np.sum(image)
+    amplitude = total_image_intensity * amplitude_multiplier
 
     yy = np.arange(H)[:, None]
     xx = np.arange(W)[None, :]
     g = np.exp(-((xx - x0)**2 + (yy - y0)**2) / (2 * sigma**2))
     g *= amplitude  # peak = amplitude
-    out = image.astype(float).copy()
-    out += g
-    if normalize:
-        out = np.clip(out, 0, None)
-    return out
+    image += g
