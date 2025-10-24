@@ -104,9 +104,23 @@ def calc_cost(far_field,output,type_cost = 0):
     return np.square(np.linalg.vector_norm((np.abs(FX)**2)/np.sqrt(far_field) - np.sqrt(far_field))) /8 # the 8 is a istake in the origin
 
 
-def random_zernike_phase(size, max_j=20, strength=np.pi):
+def generate_zernike_phase_map(shape, max_j=20, decay=0.1, strength=np.pi, aperature="circular"):
+    unit_circle = True
+    sample_scale = 1
+    
+    if aperature == "circular":
+        unit_circle = True
+        assert shape[0] == shape[1]
+    elif aperature == "rectangular":
+        unit_circle = False
+    elif aperature == "cropped":
+        unit_circle = True
+        sample_scale = np.sqrt(shape[0]**2 + shape[1]**2) / min(shape[0], shape[1])
+    else:
+        raise NotImplementedError(f"Unsupported aperature: {aperature}")
+    
     # Generate grid on the unit disk
-    y, x = np.linspace(-1, 1, size), np.linspace(-1, 1, size)
+    y, x = np.linspace(-1, 1, int(shape[0] * sample_scale)), np.linspace(-1, 1, int(shape[1] * sample_scale))
     X, Y = np.meshgrid(x, y)
     rho = np.sqrt(X**2 + Y**2)
     mask = rho <= 1
@@ -114,26 +128,38 @@ def random_zernike_phase(size, max_j=20, strength=np.pi):
     # Initialize the Zernike object
     cart = zernike.RZern(6)
     assert max_j <= zernike.Zern.nm2noll(6, 6)
-    cart.make_cart_grid(X, Y)
+    cart.make_cart_grid(X, Y, unit_circle=unit_circle)
 
     # Generate random coefficients for the phase map
     coeffs = np.zeros(cart.nk)
     for j in range(2, max_j + 1):  # skip piston term j=1
-        coeffs[j - 1] = np.random.randn() * np.exp(-0.1 * j)  # decay higher orders
+        coeffs[j - 1] = np.random.randn() * np.exp(-decay * j)  # decay higher orders
 
     # Generate phase map
     phase_map = cart.eval_grid(coeffs, matrix=True)
 
     # Normalize and scale
-    mask = ~np.isnan(phase_map)  # True for valid points
-    max_val = np.max(np.abs(phase_map[mask]))
-    phase_map[mask] = phase_map[mask] / max_val * strength
-    phase_map[~mask] = 0
+    if unit_circle:
+        mask = ~np.isnan(phase_map)  # True for valid points
+        max_val = np.max(np.abs(phase_map[mask]))
+        phase_map[mask] = phase_map[mask] / max_val * strength
+        phase_map[~mask] = 0
+    else:
+        max_val = np.max(np.abs(phase_map))
+        phase_map = phase_map / max_val * strength
 
+    # Return after crop (if scaling was performed).
+    if sample_scale != 1:
+        middle_point = (int(shape[0] * sample_scale / 2), int(shape[1] * sample_scale / 2))
+        phase_map = phase_map[
+            int(middle_point[0] - shape[0]/2): int(middle_point[0] + shape[0]/2),
+            int(middle_point[1] - shape[1]/2): int(middle_point[1] + shape[1]/2)
+        ]
+    
     return phase_map
 
 
-def image_with_random_zernike_phase(filename, size):
+def image_with_random_phase_map(filename, size, decay=0.1, strength=np.pi, aperature="circular"):
     # Load image as near field intensity
     image = cv.imread(filename, cv.IMREAD_GRAYSCALE)
     image = cv.resize(image,(size,size))
@@ -141,7 +167,7 @@ def image_with_random_zernike_phase(filename, size):
     intensity = intensity / np.max(intensity)
 
     # Generate phase map
-    phase_map = random_zernike_phase(size)
+    phase_map = generate_zernike_phase_map(size, decay=decay, strength=strength, aperature=aperature)
 
     # Combine into complex field
     combined_map = np.sqrt(intensity) * np.exp(1j * phase_map)
