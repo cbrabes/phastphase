@@ -37,6 +37,10 @@ TRUST_REGION_CG: int = 0
 
 LBFGS: int = 1
 
+WIND_METHOD_ITERATIVE: int = 0
+
+WIND_METHOD_CONVOLUTION: int = 1
+
 
 @jax.jit
 def retrieve(
@@ -53,7 +57,8 @@ def retrieve(
         jax.typing.ArrayLike
     ] = None,  # Far field mask for cropped far_fields
     loss_type=L2_MAG_LOSS,
-    descent_method=LBFGS
+    descent_method=LBFGS,
+    wind_method: int = WIND_METHOD_ITERATIVE
 ) -> Tuple[jax.Array, float]:  # Loss Type
     mask = support_mask
     support_shape = mask.shape
@@ -72,7 +77,7 @@ def retrieve(
 
     winding_number = lax.cond(
         winding_guess is None,
-        lambda _: winding_calc(support_mask, offset_intensities, cepstrum),
+        lambda _: winding_calc(support_mask, offset_intensities, cepstrum, wind_method=wind_method),
         lambda _: winding_guess_jax,
         operand=None
     )
@@ -102,9 +107,17 @@ def retrieve(
 def winding_calc(
     support_mask: jnp.ndarray, 
     far_field_intensities: jnp.ndarray,
-    cepstrum: jnp.ndarray
+    cepstrum: jnp.ndarray,
+    wind_method: int = 0
 ) -> Tuple[jax.typing.ArrayLike, ...]:
-    return iterative_winding_calc(support_shape=support_mask.shape, cepstrum=cepstrum)
+    
+    branches = (
+        lambda _: iterative_winding_calc(support_shape=support_mask.shape, cepstrum=cepstrum),
+        lambda _: convolution_winding_calc(support_mask=support_mask, far_field_intensities=far_field_intensities),
+    )
+
+    # Dispatch by integer method ID
+    return lax.switch(wind_method, branches, operand=None)
 
 
 def convolution_winding_calc(
