@@ -194,7 +194,7 @@ def iterative_winding_calc(
 
     x_winding_number = iterative_winding_calc_single_axis(
         support_shape=support_shape,
-        wrap_section_shape=upper_right_corner_slice,
+        wrap_section_shape=bottom_left_corner_slice,
         cepstrum=cepstrum,
         main_quadrant=main_quadrant,
         axis=0,
@@ -203,7 +203,7 @@ def iterative_winding_calc(
 
     y_winding_number = iterative_winding_calc_single_axis(
         support_shape=support_shape,
-        wrap_section_shape=bottom_left_corner_slice,
+        wrap_section_shape=upper_right_corner_slice,
         cepstrum=cepstrum,
         main_quadrant=main_quadrant,
         axis=1,
