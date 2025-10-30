@@ -104,7 +104,7 @@ def calc_cost(far_field,output,type_cost = 0):
     return np.square(np.linalg.vector_norm((np.abs(FX)**2)/np.sqrt(far_field) - np.sqrt(far_field))) /8 # the 8 is a istake in the origin
 
 
-def generate_zernike_phase_map(shape, max_j=20, decay=0.1, strength=np.pi, aperature="circular"):
+def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=np.pi, aperature="circular"):
     unit_circle = True
     sample_scale = 1
     
@@ -132,7 +132,7 @@ def generate_zernike_phase_map(shape, max_j=20, decay=0.1, strength=np.pi, apera
 
     # Generate random coefficients for the phase map
     coeffs = np.zeros(cart.nk)
-    for j in range(2, max_j + 1):  # skip piston term j=1
+    for j in range(min_j, max_j + 1):  # skip piston term j=1
         coeffs[j - 1] = np.random.randn() * np.exp(-decay * j)  # decay higher orders
 
     # Generate phase map
