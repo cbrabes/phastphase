@@ -104,7 +104,7 @@ def calc_cost(far_field,output,type_cost = 0):
     return np.square(np.linalg.vector_norm((np.abs(FX)**2)/np.sqrt(far_field) - np.sqrt(far_field))) /8 # the 8 is a istake in the origin
 
 
-def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=np.pi, aperature="circular"):
+def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=jnp.pi, aperature="circular"):
     unit_circle = True
     sample_scale = 1
     
@@ -115,14 +115,14 @@ def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=np.
         unit_circle = False
     elif aperature == "cropped":
         unit_circle = True
-        sample_scale = np.sqrt(shape[0]**2 + shape[1]**2) / min(shape[0], shape[1])
+        sample_scale = jnp.sqrt(shape[0]**2 + shape[1]**2) / min(shape[0], shape[1])
     else:
         raise NotImplementedError(f"Unsupported aperature: {aperature}")
     
     # Generate grid on the unit disk
-    y, x = np.linspace(-1, 1, int(shape[0] * sample_scale)), np.linspace(-1, 1, int(shape[1] * sample_scale))
-    X, Y = np.meshgrid(x, y)
-    rho = np.sqrt(X**2 + Y**2)
+    y, x = jnp.linspace(-1, 1, int(shape[0] * sample_scale)), jnp.linspace(-1, 1, int(shape[1] * sample_scale))
+    X, Y = jnp.meshgrid(x, y)
+    rho = jnp.sqrt(X**2 + Y**2)
     mask = rho <= 1
 
     # Initialize the Zernike object
@@ -131,21 +131,21 @@ def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=np.
     cart.make_cart_grid(X, Y, unit_circle=unit_circle)
 
     # Generate random coefficients for the phase map
-    coeffs = np.zeros(cart.nk)
+    coeffs = jnp.zeros(cart.nk)
     for j in range(min_j, max_j + 1):  # skip piston term j=1
-        coeffs[j - 1] = np.random.randn() * np.exp(-decay * j)  # decay higher orders
+        coeffs = coeffs.at[j - 1].set(random.gauss(mu=0, sigma=1) * jnp.exp(-decay * j))  # decay higher orders
 
     # Generate phase map
-    phase_map = cart.eval_grid(coeffs, matrix=True)
+    phase_map = jnp.array(cart.eval_grid(coeffs, matrix=True))
 
     # Normalize and scale
     if unit_circle:
-        mask = ~np.isnan(phase_map)  # True for valid points
-        max_val = np.max(np.abs(phase_map[mask]))
-        phase_map[mask] = phase_map[mask] / max_val * strength
-        phase_map[~mask] = 0
+        mask = ~jnp.isnan(phase_map)  # True for valid points
+        max_val = jnp.max(jnp.abs(phase_map[mask]))
+        phase_map = phase_map.at[mask].set(phase_map[mask] / max_val * strength)
+        phase_map = phase_map.at[~mask].set(0)
     else:
-        max_val = np.max(np.abs(phase_map))
+        max_val = jnp.max(jnp.abs(phase_map))
         phase_map = phase_map / max_val * strength
 
     # Return after crop (if scaling was performed).
@@ -159,18 +159,18 @@ def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=np.
     return phase_map
 
 
-def image_with_random_phase_map(filename, shape, decay=0.1, strength=np.pi, aperature="circular"):
+def image_with_random_phase_map(filename, shape, decay=0.1, strength=jnp.pi, aperature="circular"):
     # Load image as near field intensity
     image = cv.imread(filename, cv.IMREAD_GRAYSCALE)
     image = cv.resize(image, shape)
-    intensity = np.asarray(image)
-    intensity = intensity / np.max(intensity)
+    intensity = jnp.asarray(image)
+    intensity = intensity / jnp.max(intensity)
 
     # Generate phase map
     phase_map = generate_zernike_phase_map(shape, decay=decay, strength=strength, aperature=aperature)
 
     # Combine into complex field
-    combined_map = np.sqrt(intensity) * np.exp(1j * phase_map)
+    combined_map = jnp.sqrt(intensity) * jnp.exp(1j * phase_map)
     
     return phase_map, combined_map
 
@@ -181,18 +181,19 @@ def add_heaviside_spot(image, x0=None, y0=None, radius=None, amplitude_multiplie
     x0 = x0 if x0 is not None else random.randrange(0, H)
     y0 = y0 if y0 is not None else random.randrange(0, W)
     radius = radius if radius is not None else random.randrange(0, 10)
-    amplitude_multiplier = amplitude_multiplier if amplitude_multiplier is not None else np.random.uniform(0.5, 2.0)
+    amplitude_multiplier = amplitude_multiplier if amplitude_multiplier is not None else jnp.random.uniform(0.5, 2.0)
 
-    total_image_intensity = np.sum(image)
+    total_image_intensity = jnp.sum(image)
     amplitude = total_image_intensity * amplitude_multiplier
 
-    yy = np.arange(H)[:, None]
-    xx = np.arange(W)[None, :]
+    yy = jnp.arange(H)[:, None]
+    xx = jnp.arange(W)[None, :]
 
-    spot_map = np.zeros((H, W), dtype=float)
-    dist = np.sqrt((xx - x0)**2 + (yy - y0)**2)
-    spot_map[dist <= radius] += amplitude
-    image += spot_map
+    spot_map = jnp.zeros((H, W), dtype=float)
+    dist = jnp.sqrt((xx - x0)**2 + (yy - y0)**2)
+    spot_map = spot_map.at[dist <= radius].add(amplitude)
+    
+    return image + spot_map
 
 
 def add_gaussian_spot(image, x0=None, y0=None, sigma=None, amplitude_multiplier=None):
