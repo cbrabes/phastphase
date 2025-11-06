@@ -189,7 +189,7 @@ def add_heaviside_spot(image, x0=None, y0=None, radius=None, amplitude_multiplie
 
     spot_map = jnp.zeros((H, W), dtype=float)
     dist = jnp.sqrt((xx - x0)**2 + (yy - y0)**2)
-    spot_map = spot_map.at[dist <= radius].add(amplitude)
+    spot_map = spot_map.at[dist < radius].add(amplitude)
     
     return image + spot_map
 

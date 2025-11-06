@@ -3,3 +3,6 @@ pytorch-minimize
 tqdm
 lineax
 optax
+opencv-python
+matplotlib
+zernike
