@@ -104,7 +104,7 @@ def calc_cost(far_field,output,type_cost = 0):
     return np.square(np.linalg.vector_norm((np.abs(FX)**2)/np.sqrt(far_field) - np.sqrt(far_field))) /8 # the 8 is a istake in the origin
 
 
-def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=jnp.pi, aperature="circular"):
+def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, aperature="circular"):
     unit_circle = True
     sample_scale = 1
     
@@ -138,15 +138,13 @@ def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, strength=jnp
     # Generate phase map
     phase_map = jnp.array(cart.eval_grid(coeffs, matrix=True))
 
-    # Normalize and scale
+    # Wrap to [-pi, pi]
+    phase_map = jnp.angle(jnp.exp(1j * phase_map))
+
+    # Set NaN -> 0
     if unit_circle:
         mask = ~jnp.isnan(phase_map)  # True for valid points
-        max_val = jnp.max(jnp.abs(phase_map[mask]))
-        phase_map = phase_map.at[mask].set(phase_map[mask] / max_val * strength)
         phase_map = phase_map.at[~mask].set(0)
-    else:
-        max_val = jnp.max(jnp.abs(phase_map))
-        phase_map = phase_map / max_val * strength
 
     # Return after crop (if scaling was performed).
     if sample_scale != 1:
