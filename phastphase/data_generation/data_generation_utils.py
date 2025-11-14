@@ -115,14 +115,14 @@ def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, aperature="c
         unit_circle = False
     elif aperature == "cropped":
         unit_circle = True
-        sample_scale = jnp.sqrt(shape[0]**2 + shape[1]**2) / min(shape[0], shape[1])
+        sample_scale = np.sqrt(shape[0]**2 + shape[1]**2) / min(shape[0], shape[1])
     else:
         raise NotImplementedError(f"Unsupported aperature: {aperature}")
     
     # Generate grid on the unit disk
-    y, x = jnp.linspace(-1, 1, int(shape[0] * sample_scale)), jnp.linspace(-1, 1, int(shape[1] * sample_scale))
-    X, Y = jnp.meshgrid(x, y)
-    rho = jnp.sqrt(X**2 + Y**2)
+    y, x = np.linspace(-1, 1, int(shape[0] * sample_scale)), np.linspace(-1, 1, int(shape[1] * sample_scale))
+    X, Y = np.meshgrid(x, y)
+    rho = np.sqrt(X**2 + Y**2)
     mask = rho <= 1
 
     # Initialize the Zernike object
@@ -131,20 +131,20 @@ def generate_zernike_phase_map(shape, min_j=2, max_j=20, decay=0.1, aperature="c
     cart.make_cart_grid(X, Y, unit_circle=unit_circle)
 
     # Generate random coefficients for the phase map
-    coeffs = jnp.zeros(cart.nk)
+    coeffs = np.zeros(cart.nk)
     for j in range(min_j, max_j + 1):  # skip piston term j=1
-        coeffs = coeffs.at[j - 1].set(random.gauss(mu=0, sigma=1) * jnp.exp(-decay * j))  # decay higher orders
+        coeffs[j - 1] = random.gauss(mu=0, sigma=1) * np.exp(-decay * j)  # decay higher orders
 
     # Generate phase map
-    phase_map = jnp.array(cart.eval_grid(coeffs, matrix=True))
+    phase_map = np.array(cart.eval_grid(coeffs, matrix=True))
 
     # Wrap to [-pi, pi]
-    phase_map = jnp.angle(jnp.exp(1j * phase_map))
+    phase_map = np.angle(np.exp(1j * phase_map))
 
     # Set NaN -> 0
     if unit_circle:
-        mask = ~jnp.isnan(phase_map)  # True for valid points
-        phase_map = phase_map.at[~mask].set(0)
+        mask = ~np.isnan(phase_map)  # True for valid points
+        phase_map[~mask] = 0.0
 
     # Return after crop (if scaling was performed).
     if sample_scale != 1:
@@ -173,48 +173,48 @@ def image_with_random_phase_map(filename, shape, decay=0.1, strength=jnp.pi, ape
     return phase_map, combined_map
 
 
-def add_heaviside_spot(image, x0=None, y0=None, radius=None, amplitude_multiplier=None):
-    H, W = image.shape
+def add_delta_spot(magnitude_map, x0=None, y0=None, radius=None, magnitude_multiplier=None):
+    H, W = magnitude_map.shape
 
     x0 = x0 if x0 is not None else random.randrange(0, H)
     y0 = y0 if y0 is not None else random.randrange(0, W)
     radius = radius if radius is not None else random.randrange(0, 10)
-    amplitude_multiplier = amplitude_multiplier if amplitude_multiplier is not None else jnp.random.uniform(0.5, 2.0)
+    magnitude_multiplier = magnitude_multiplier if magnitude_multiplier is not None else np.random.normal(0.5, 2.0)
 
-    total_image_intensity = jnp.sum(image)
-    amplitude = total_image_intensity * amplitude_multiplier
+    total_magnitude = np.sum(magnitude_map)
+    spot_magnitude = total_magnitude * magnitude_multiplier
 
-    yy = jnp.arange(H)[:, None]
-    xx = jnp.arange(W)[None, :]
+    xx = np.arange(H)[:, None]
+    yy = np.arange(W)[None, :]
 
-    spot_map = jnp.zeros((H, W), dtype=float)
-    dist = jnp.sqrt((xx - x0)**2 + (yy - y0)**2)
-    spot_map = spot_map.at[dist < radius].add(amplitude)
-    
-    return image + spot_map
+    spot_map = np.zeros((H, W), dtype=float)
+    dist = np.sqrt((xx - x0)**2 + (yy - y0)**2)
+    spot_map[dist < radius] += spot_magnitude
+
+    return magnitude_map + spot_map
 
 
-def add_gaussian_spot(image, x0=None, y0=None, sigma=None, amplitude_multiplier=None):
+def add_gaussian_spot(magnitude_map, x0=None, y0=None, sigma=None, magnitude_multiplier=None):
     """
-    Add a Gaussian bright spot to a 2D image.
-    - image: 2D numpy array (float), intensity-like (non-negative).
+    Add a Gaussian bright spot to a 2D magnitude map.
+    - magnitude_map: 2D numpy array (float), magnitude-like (non-negative).
     - x0, y0: spot center in pixel coordinates (cols, rows).
     - sigma: standard deviation in pixels.
-    - amplitude: peak additional intensity (same units as image).
-    Returns new image (copy).
+    - magnitude_multiplier: peak additional magnitude (same units as magnitude_map).
+    Returns new magnitude map (copy).
     """
-    H, W = image.shape
+    H, W = magnitude_map.shape
 
     x0 = x0 if x0 is not None else random.randrange(0, H)
     y0 = y0 if y0 is not None else random.randrange(0, W)
     sigma = sigma if sigma is not None else np.random.uniform(2.0, 10.0)
-    amplitude_multiplier = amplitude_multiplier if amplitude_multiplier is not None else np.random.uniform(0.5, 2.0)
+    magnitude_multiplier = magnitude_multiplier if magnitude_multiplier is not None else np.random.uniform(0.5, 2.0)
 
-    total_image_intensity = np.sum(image)
-    amplitude = total_image_intensity * amplitude_multiplier
+    total_magnitude = np.sum(magnitude_map)
+    spot_magnitude = total_magnitude * magnitude_multiplier
 
     yy = np.arange(H)[:, None]
     xx = np.arange(W)[None, :]
     g = np.exp(-((xx - x0)**2 + (yy - y0)**2) / (2 * sigma**2))
-    g *= amplitude  # peak = amplitude
-    image += g
+    g *= spot_magnitude
+    return magnitude_map + g
