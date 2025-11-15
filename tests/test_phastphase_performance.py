@@ -1,3 +1,8 @@
+import os
+# Limit GPU memory allocation
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.75'  # Use 75% of GPU memory
+
 import time
 from pathlib import Path
 

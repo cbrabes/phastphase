@@ -112,7 +112,7 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
             ## Case 1: Sanity Test ##
 
             # Generate real and imaginary parts from N(0, 1)
-            real_part = np.random.randn(image_size, image_size)
+            real_part = np.abs(np.random.randn(image_size, image_size))
             imag_part = np.random.randn(image_size, image_size)
 
             # Generate a location for the bright spot.
@@ -125,7 +125,7 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
             imag_part[spot_center[0], spot_center[1]] = 0.0
 
             # Combine into a complex-valued array
-            complex_map = real_part + 1j * imag_part
+            complex_map = magnitude + 1j * imag_part
 
             save_near_field(case_dir, complex_map, spot_center, img_path=Path("1"))
 
@@ -151,7 +151,7 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
             ## Case 3: Constant Images ##
 
             for i in range(1, 6):
-                magnitude = np.full((image_size, image_size), np.random.randn())
+                magnitude = np.full((image_size, image_size), np.abs(np.random.randn()))
 
                 # Generate phase map
                 phase_map = dgu.generate_zernike_phase_map((image_size, image_size), aperature="cropped")
@@ -197,7 +197,7 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
 
             with load_near_field_from_image(regular_imgs[0], case_dir, image_size=image_size) as (near_field, spot_center):
 
-                magnitude = np.full((image_size, image_size), np.random.randn())
+                magnitude = np.full((image_size, image_size), np.abs(np.random.randn()))
             
                 # Generate phase map and duplicate the magnitude into the phase.
                 phase_map = dgu.generate_zernike_phase_map((image_size, image_size), aperature="cropped") + np.real(near_field)
