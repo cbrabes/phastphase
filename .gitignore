@@ -27,7 +27,6 @@
 *.pickle
 *.h5
 *.gif
-*.png
 *.mp4
 !docs/source/static/*.png
 !docs/source/static/*.svg
