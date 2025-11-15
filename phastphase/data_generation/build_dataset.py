@@ -248,7 +248,7 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
         elif case == 9:
             ## Case 9: Generic Image with Gaussian Bright Spot ##
             
-            for img_path in regular_imgs[:5]:
+            for img_path in sorted(regular_imgs)[:5]:
                 with load_near_field_from_image(img_path, case_dir, image_size=image_size) as (near_field, spot_center):
 
                     # Generate phase map.
