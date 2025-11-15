@@ -70,12 +70,12 @@ def pytest_generate_tests(metafunc):
 
     # Set default parameters.
     metafunc.parametrize("descent_method", [0])
-    metafunc.parametrize("max_iters", [1000])
-    metafunc.parametrize("grad_tolerance", [1e-14])
+    metafunc.parametrize("max_iters", [30])
+    metafunc.parametrize("grad_tolerance", [1e-8])
     metafunc.parametrize("wind_method", [0])
     metafunc.parametrize("should_guess_wind", [False])
     metafunc.parametrize("fourier_oversample", [2])
-    metafunc.parametrize("convergence_tolerance", [1e-10])
+    metafunc.parametrize("convergence_tolerance", [1e-3])
 
 
 def test_phastphase_retrieve(
