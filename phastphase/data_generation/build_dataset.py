@@ -124,8 +124,11 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
             # Remove phase at spot.
             imag_part[spot_center[0], spot_center[1]] = 0.0
 
+            # Wrap to [-pi, pi]
+            imag_part = np.angle(np.exp(1j * imag_part))
+
             # Combine into a complex-valued array
-            complex_map = magnitude + 1j * imag_part
+            complex_map = magnitude * np.exp(1j * imag_part)
 
             save_near_field(case_dir, complex_map, spot_center, img_path=Path("1"))
 
@@ -190,7 +193,25 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
         elif case == 5:
             ## Case 5: Sparse Images with Phase Pattern ##
 
-            pass
+            with load_near_field_from_image(sparse_imgs[0], case_dir, image_size=image_size) as (near_field, spot_center):
+
+                # Generate phase map
+                phase_map = dgu.generate_zernike_phase_map((image_size, image_size), aperature="cropped")
+
+                # Add image intensity as phase.
+                phase_map += np.real(near_field)
+
+                # Add bright spot.
+                magnitude = dgu.add_delta_spot(np.real(near_field), x0=spot_center[0], y0=spot_center[1], radius=1, magnitude_multiplier=1)
+
+                # Remove phase at spot.
+                phase_map[spot_center[0], spot_center[1]] = 0.0
+
+                # Wrap to [-pi, pi]
+                phase_map = np.angle(np.exp(1j * phase_map))
+                
+                # Collect near field and complex object.
+                near_field[:] = magnitude * np.exp(1j * phase_map)
 
         elif case == 6:
             ## Case 6: Constant Intensity and Phase Object ##
@@ -248,7 +269,7 @@ def build_dataset(datasets_root: Path, output_root: Path, image_size: int) -> No
         elif case == 9:
             ## Case 9: Generic Image with Gaussian Bright Spot ##
             
-            for img_path in sorted(regular_imgs)[:5]:
+            for img_path in sorted(regular_imgs, key=lambda p: int(p.stem))[:5]:
                 with load_near_field_from_image(img_path, case_dir, image_size=image_size) as (near_field, spot_center):
 
                     # Generate phase map.
