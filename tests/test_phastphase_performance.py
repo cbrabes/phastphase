@@ -28,22 +28,32 @@ SELECTED_GRAD_TOLERANCES = [1e-8]
 SELECTED_SHOULD_GUESS_WIND = [False]
 SELECTED_FOURIER_OVERSAMPLES = [2]
 SELECTED_CONVERGENCE_TOLERANCES = [5e-4]
-SELECTED_MAX_RANDOM_RESTARTS = [10]
+SELECTED_MAX_RANDOM_RESTARTS = [100]
 
 RANDOM_GENERATOR = np.random.default_rng(0)
 
 
 # (method_name, method_function, is_active?)
 INITIAL_GUESS_METHODS = [
-    ("random", random_initialization, True),
+    ("random", random_initialization, False),
     ("spectral", spectral_initialization, False),
-    ("trunc_spectral", truncated_spectral_initialization, False),
+    ("trunc_spectral", truncated_spectral_initialization, True),
     ("ortho", orthogonality_promoting_initialization, False),
 ]
 
 
+# (method_name, method_function, is_active?)
+FLOW_METHODS = [
+    ("wirtinger_flow", wirtinger_flow, True),
+    ("truncated_wirtinger_flow", truncated_wirtinger_flow, True),
+    ("amplitude_flow", amplitude_flow, True),
+    ("truncated_amplitude_flow", truncated_amplitude_flow, True),
+]
+
+
 # Filter the list to only include active methods
-ACTIVE_METHODS = [m for m in INITIAL_GUESS_METHODS if m[2]]
+ACTIVE_INIT_METHODS = [m for m in INITIAL_GUESS_METHODS if m[2]]
+ACTIVE_FLOW_METHODS = [m for m in FLOW_METHODS if m[2]]
 
 
 def pytest_generate_tests(metafunc):
@@ -186,7 +196,7 @@ def winding_guess(case_data, should_guess_wind):
     return winding_guess
 
 
-@pytest.fixture(params=ACTIVE_METHODS, ids=[m[0] for m in ACTIVE_METHODS])
+@pytest.fixture(params=ACTIVE_INIT_METHODS, ids=[m[0] for m in ACTIVE_INIT_METHODS])
 def initial_guess(request, far_field, max_random_restarts):
     """
     This fixture returns the actual x0 vector.
@@ -215,6 +225,12 @@ def initial_guess(request, far_field, max_random_restarts):
 
     # Return the iterator object so the test can loop over it
     return guess_generator()
+
+
+@pytest.fixture(params=ACTIVE_FLOW_METHODS, ids=[m[0] for m in ACTIVE_FLOW_METHODS])
+def flow_method(request):
+    method_name, method_func, _ = request.param
+    return method_func
 
 
 @pytest.fixture
@@ -263,11 +279,11 @@ def evaluate_convergence(case_id, case_file, convergence_tolerance):
         if output:
             print(f"\n[Case ID={case_id} File={case_file}] {meta_str} | Error={err:.4e} | Time={duration:.4f}s]", flush=True)
         
-        # 4. Convergence Check (Assertion)
-        # We explicitly cast to float to avoid JAX array boolean ambiguity in some contexts
-        assert float(err) < convergence_tolerance, f"Convergence failed. Error {err:.4e} > Tol {convergence_tolerance}"
-        
-        return err
+            # Convergence Check (Assertion)
+            # We explicitly cast to float to avoid JAX array boolean ambiguity in some contexts
+            assert float(err) < convergence_tolerance, f"Convergence failed. Error {err:.4e} > Tol {convergence_tolerance}"
+
+        return err, (float(err) < convergence_tolerance)
 
     return _evaluate
 
@@ -320,15 +336,16 @@ def test_phastphase_retrieve(
     )
 
 
-def test_amplitude_flow_retrieve(
+def test_gradient_flow_retrieve(
     request,
     case_id: int,
     case_file: str,
     near_field: jnp.ndarray,
     far_field: jnp.ndarray,
+    flow_method,
     initial_guess: iter,
     grad_tolerance: float,
-    max_iters: int,
+    max_iters: int, 
     max_random_restarts: int,
     execution_timer,
     evaluate_convergence
@@ -337,59 +354,57 @@ def test_amplitude_flow_retrieve(
 
     Returns the (err, duration) tuple for reporting if needed.
     """
-    init_method = request.node.callspec.params["initial_guess"][0]
+    init_method_name = request.node.callspec.params["initial_guess"][0]
+    flow_method_name = request.node.callspec.params["flow_method"][0]
     
-    success = False
     min_err = float('inf')
+    min_prediction = None
+    min_t = None
 
     try:
-        for attempt, x0 in enumerate(initial_guess):
+        for attempt, x0 in enumerate(initial_guess):          
             with execution_timer as t:
-                x_out = amplitude_flow(
+                x_out = flow_method(
                     x0,
                     far_field,
                     grad_tolerance=grad_tolerance,
                     iter_limit=max_iters,
                 )
 
-            try:
-                err = evaluate_convergence(
-                    prediction=x_out,
-                    ground_truth=near_field,
-                    timer_obj=t,
-                    metadata={
-                        "method": "amplitude_flow",
-                        "init_method": init_method,
-                        "attempt": f"{attempt + 1}",
-                        "max_iters": max_iters,
-                        "grad_tolerance": grad_tolerance,
-                    },
-                    output=False,
-                )
-
-                # Success! Found a solution that converges.
-                success = True
+            err, success = evaluate_convergence(
+                prediction=x_out,
+                ground_truth=near_field,
+                timer_obj=t,
+                output=False,
+            )
+            if success:
+                # Found a solution that converges.
+                min_err = err
+                min_prediction = x_out
+                min_t = t
                 break
-            except AssertionError as e:
+            else:
                 # Capture error and continue to the next guess from the fixture
-                continue
+                if err < min_err:
+                    min_err = err
+                    min_prediction = x_out
+                    min_t = t
+
     except Exception as exc:  # pragma: no cover - surface errors as test failures
         pytest.fail(f"retrieve raised an exception: {exc}")
 
     # If we exhaust the generator without returning, the test has failed.
-    if success:
-        evaluate_convergence(
-            prediction=x_out,
-            ground_truth=near_field,
-            timer_obj=t,
-            metadata={
-                "method": "amplitude_flow",
-                "init_method": init_method,
-                "attempt": f"{attempt + 1}",
-                "max_iters": max_iters,
-                "grad_tolerance": grad_tolerance,
-            },
-            output=True,
-        )
-    else:
-        pytest.fail(f"method=amplitude_flow init_method={init_method} failed to converge after {attempt + 1} attempts.")
+    evaluate_convergence(
+        prediction=min_prediction,
+        ground_truth=near_field,
+        timer_obj=min_t,
+        metadata={
+            "flow_method": flow_method_name,
+            "init_method": init_method_name,
+            "attempt": f"{attempt + 1}",
+            "max_iters": max_iters,
+            "max_random_restarts": max_random_restarts,
+            "grad_tolerance": grad_tolerance,
+        },
+        output=True,
+    )
