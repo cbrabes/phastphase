@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import random as _random
+import hashlib
 
 import contextlib
 import jax.numpy as jnp
@@ -40,6 +41,9 @@ def save_near_field(out_dir: Path, near_field: jnp.ndarray, spot_center: np.ndar
     # Ensure output dir exists.
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Get MD5 of near field.
+    near_field_md5 = hashlib.md5(near_field.tobytes()).hexdigest()
+
     out_name = f"{img_path.stem}.npz"
     out_path = out_dir / out_name
     
@@ -48,6 +52,7 @@ def save_near_field(out_dir: Path, near_field: jnp.ndarray, spot_center: np.ndar
         near_field=near_field.astype(np.complex128),
         filename=str(img_path.name),
         spot_center=spot_center.astype(np.int32),
+        near_field_md5=near_field_md5,
     )
 
 

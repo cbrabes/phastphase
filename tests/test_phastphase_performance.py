@@ -4,6 +4,9 @@ os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.75'  # Use 75% of GPU memory
 
 import time
+import datetime
+import sqlite3
+import json
 from pathlib import Path
 
 import numpy as np
@@ -38,8 +41,8 @@ RANDOM_GENERATOR = np.random.default_rng(0)
 INITIAL_GUESS_METHODS = [
     ("random", random_initialization, False),
     ("spectral", spectral_initialization, True),
-    ("trunc_spectral", truncated_spectral_initialization, False),
-    ("ortho", orthogonality_promoting_initialization, False),
+    ("trunc_spectral", truncated_spectral_initialization, True),
+    ("ortho", orthogonality_promoting_initialization, True),
 ]
 
 
@@ -55,6 +58,77 @@ FLOW_METHODS = [
 # Filter the list to only include active methods
 ACTIVE_INIT_METHODS = [m for m in INITIAL_GUESS_METHODS if m[2]]
 ACTIVE_FLOW_METHODS = [m for m in FLOW_METHODS if m[2]]
+
+
+class ResultsDatabase:
+    def __init__(self, db_path="tests/phase_retrieval_results.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.create_table()
+    
+    def create_table(self):
+        query = """
+        CREATE TABLE IF NOT EXISTS results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            case_id INTEGER,
+            case_file TEXT,
+            method_name TEXT,
+            init_method_name TEXT,
+            num_attempts INTEGER,
+            error REAL,
+            grad_tolerance REAL,
+            max_iters INTEGER,
+            fourier_oversample INTEGER,
+            convergence_tolerance REAL,
+            compute_duration REAL,
+            near_field_md5 TEXT,
+            metadata JSON
+        )
+        """
+        self.conn.execute(query)
+        self.conn.commit()
+
+    def save_result(
+        self,
+        case_id: int, 
+        case_file: str, 
+        method_name: str, 
+        init_method_name: str, 
+        num_attempts: int, 
+        error: float, 
+        compute_duration: float, 
+        grad_tolerance: float, 
+        convergence_tolerance: float,
+        max_iters: int,
+        fourier_oversample: int,
+        near_field_md5: str,
+        metadata: dict
+    ):
+        query = """
+            
+        INSERT INTO results (timestamp, case_id, case_file, method_name, init_method_name, num_attempts, error, grad_tolerance, max_iters, fourier_oversample, convergence_tolerance, compute_duration, near_field_md5, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        self.conn.execute(query, (
+            datetime.datetime.now().isoformat(),
+            case_id, 
+            case_file, 
+            method_name, 
+            init_method_name, 
+            num_attempts, 
+            float(error), 
+            float(grad_tolerance), 
+            max_iters, 
+            fourier_oversample, 
+            float(convergence_tolerance), 
+            float(compute_duration), 
+            near_field_md5, 
+            json.dumps(metadata)
+        ))
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
 
 
 def pytest_generate_tests(metafunc):
@@ -166,6 +240,12 @@ def near_field(case_data):
 
 
 @pytest.fixture
+def near_field_md5(case_data):
+    """Fixture to extract near_field from case_data."""
+    return str(case_data["near_field_md5"])
+
+
+@pytest.fixture
 def far_field(near_field):
     """Fixture to compute far_field from near_field."""
         # build far-field intensity (oversample by specified factor)
@@ -255,14 +335,43 @@ def execution_timer():
     return Timer()
 
 
+@pytest.fixture(scope="session")
+def db_session():
+    """
+    Creates the database connection once for the entire test session.
+    """
+    db = ResultsDatabase()
+    yield db
+    db.close()
+
+
 @pytest.fixture
-def evaluate_convergence(case_id, case_file, convergence_tolerance):
+def evaluate_convergence(
+    case_id, 
+    case_file, 
+    convergence_tolerance, 
+    max_iters, 
+    grad_tolerance, 
+    fourier_oversample, 
+    near_field_md5,
+    db_session
+):
     """
     Returns a FUNCTION that performs error calculation, reporting, 
     and assertion. This cleans up the test body significantly.
     """
-    def _evaluate(prediction, ground_truth, timer_obj, metadata=None, output=True):
-        # 1. Normalization (Phase Retrieval ambiguity handling)
+    def _evaluate(
+        prediction, 
+        ground_truth, 
+        timer_obj, 
+        method_name, 
+        init_method_name="", 
+        num_attempts=1,
+        metadata=None, 
+        output=True,
+        save_to_db=True,
+    ):
+        # Normalization (Phase Retrieval ambiguity handling)
         # Note: In real phase retrieval, you might need to align the global phase 
         # (e.g., x_out * jnp.exp(-1j * angle)) before comparing. 
         # Here we just normalize norms for simplicity.
@@ -272,14 +381,32 @@ def evaluate_convergence(case_id, case_file, convergence_tolerance):
         x_out = x_out / jnp.sign(x_out[0,0]) # Fix global phase ambiguity for error calc
         x_gt = x_gt / jnp.sign(x_gt[0,0]) # Fix global phase ambiguity for error calc
 
-        # 2. Error Calculation (Relative Error)
+        # Error Calculation (Relative Error)
         err = jnp.linalg.norm(x_out - x_gt) / jnp.linalg.norm(x_gt)
         
-        # 3. Reporting
+        # Reporting
         # We construct a log string from the metadata dict provided
         meta_str = " ".join([f"{k}={v}" for k, v in (metadata or {}).items()])
         duration = timer_obj.duration if timer_obj else 0.0
         
+        # Save to Database
+        if save_to_db:
+            db_session.save_result(
+                case_id=case_id,
+                case_file=case_file,
+                method_name=method_name,
+                init_method_name=init_method_name,
+                num_attempts=num_attempts,
+                error=float(err),
+                compute_duration=float(duration),
+                grad_tolerance=float(grad_tolerance),
+                convergence_tolerance=float(convergence_tolerance),
+                max_iters=int(max_iters),
+                fourier_oversample=int(fourier_oversample),
+                near_field_md5=near_field_md5,
+                metadata=metadata or {}
+            )
+
         if output:
             print(f"\n[Case ID={case_id} File={case_file}] {meta_str} | Error={err:.4e} | Time={duration:.4f}s]", flush=True)
         
@@ -330,13 +457,11 @@ def test_phastphase_retrieve(
         prediction=x_out,
         ground_truth=near_field,
         timer_obj=t,
+        method_name="phastphase",
         metadata={
-            "method": "phastphase",
             "winding_guess": winding_guess,
             "descent_method": descent_method,
             "wind_method": wind_method,
-            "max_iters": max_iters,
-            "grad_tolerance": grad_tolerance,
         }
     )
 
@@ -380,7 +505,14 @@ def test_gradient_flow_retrieve(
                 prediction=x_out,
                 ground_truth=near_field,
                 timer_obj=t,
+                method_name=flow_method_name,
+                init_method_name=init_method_name,
+                num_attempts=attempt + 1,
+                metadata={
+                    "max_random_restarts": max_random_restarts,
+                },
                 output=False,
+                save_to_db=True,
             )
             if success:
                 # Found a solution that converges.
@@ -404,15 +536,14 @@ def test_gradient_flow_retrieve(
         prediction=min_prediction,
         ground_truth=near_field,
         timer_obj=min_t,
+        method_name=flow_method_name,
+        init_method_name=init_method_name,
+        num_attempts=attempt + 1,
         metadata={
-            "flow_method": flow_method_name,
-            "init_method": init_method_name,
-            "attempt": f"{attempt + 1}",
-            "max_iters": max_iters,
             "max_random_restarts": max_random_restarts,
-            "grad_tolerance": grad_tolerance,
         },
         output=True,
+        save_to_db=False,
     )
 
 
@@ -479,8 +610,8 @@ def test_HIO_retrieve(
         ground_truth=near_field,
         timer_obj=min_t,
         metadata={
-            "flow_method": flow_method_name,
-            "init_method": init_method_name,
+            "method_name": flow_method_name,
+            "init_method_name": init_method_name,
             "attempt": f"{attempt + 1}",
             "max_iters": max_iters,
             "max_random_restarts": max_random_restarts,
