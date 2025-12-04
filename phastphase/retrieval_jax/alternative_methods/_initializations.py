@@ -31,10 +31,10 @@ def observation_operator(
 def spectral_initialization(
     near_field_shape: Tuple[int, ...],
     measured_intensity: jnp.ndarray,
+    random_key: jnp.ndarray,
     max_iter: int = 1000,
     tol: float = 1e-6,
     num_vectors: int = 1,
-    random_seed: int = 42,
 ) -> jnp.ndarray:
     """Spectral initialization for phase retrieval.
 
@@ -53,8 +53,8 @@ def spectral_initialization(
 
     x = jnp.ones(near_field_shape)
     x = view_as_flat_real(x)
-    key = jax.random.key(random_seed)
-    x_init = jax.random.normal(key, (x.size, num_vectors))
+    current_key, subkey = jax.random.split(random_key)
+    x_init = jax.random.normal(subkey, (x.size, num_vectors))
     theta, U, i = lobpcg_standard(A=observation_op, X=x_init, tol=tol, m=max_iter)
 
     sorted_indices = jnp.argsort(-theta)
@@ -71,11 +71,11 @@ def spectral_initialization(
 def truncated_spectral_initialization(
     near_field_shape: Tuple[int, ...],
     measured_intensity: jnp.ndarray,
+    random_key: jnp.ndarray,
     truncation_threshold: float = 0.9,
     max_iter: int = 1000,
     tol: float = 1e-6,
     num_vectors: int = 1,
-    random_seed: int = 42,
 ) -> jnp.ndarray:
     """Truncated spectral initialization for phase retrieval.
 
@@ -101,8 +101,8 @@ def truncated_spectral_initialization(
 
     x = jnp.ones(near_field_shape)
     x = view_as_flat_real(x)
-    key = jax.random.key(random_seed)
-    x_init = jax.random.normal(key, (x.size, num_vectors))
+    current_key, subkey = jax.random.split(random_key)
+    x_init = jax.random.normal(subkey, (x.size, num_vectors))
     theta, U, i = lobpcg_standard(A=observation_op, X=x_init, tol=tol, m=max_iter)
 
     sorted_indices = jnp.argsort(-theta)
@@ -119,8 +119,8 @@ def truncated_spectral_initialization(
 def orthogonality_promoting_initialization(
     near_field_shape: Tuple[int, ...],
     measured_intensity: jnp.ndarray,
+    random_key: jnp.ndarray,
     tol: float = 1e-6,
-    random_seed: int = 42,
     truncation_ratio: float = 1.0 / 6,
     num_vectors: int = 1,
     max_iter: int = 1000,
@@ -144,8 +144,8 @@ def orthogonality_promoting_initialization(
     )
     x = jnp.ones(near_field_shape, dtype=jnp.complex64)
     x = view_as_flat_real(x)
-    key = jax.random.key(random_seed)
-    x_init = jax.random.normal(key, (x.size, num_vectors))
+    current_key, subkey = jax.random.split(random_key)
+    x_init = jax.random.normal(subkey, (x.size, num_vectors))
     obs_op = Partial(
         observation_operator,
         measured_intensity=truncated_intensity,
@@ -156,6 +156,34 @@ def orthogonality_promoting_initialization(
     sorted_indices = jnp.argsort(-theta)
     principal_eigenvector = U[:, sorted_indices[0]]
     output_x = view_as_complex(principal_eigenvector, near_field_shape)
+    output_x = (
+        output_x
+        / jnp.linalg.vector_norm(output_x)
+        * jnp.sqrt(jnp.sum(measured_intensity))
+    )
+    return output_x
+
+
+def random_initialization(
+    near_field_shape: Tuple[int, ...],
+    measured_intensity: jnp.ndarray,
+    random_key: jnp.ndarray,
+) -> jnp.ndarray:
+    """Random initialization for phase retrieval.
+    TODO: Should we wrap the phase?
+
+    Args:
+        near_field_shape: Shape of the near field (height, width).
+        measured_intensity: Measured intensity in the far field.
+        random_seed: Random seed for reproducibility.
+
+    Returns:
+        Initial guess for the near field, a random complex array normalized by the square root of the sum of measured intensity.
+    """
+    current_key, subkey = jax.random.split(random_key)
+    x = jax.random.normal(subkey, near_field_shape, dtype=jnp.complex64)
+    x_flat = view_as_flat_real(x)
+    output_x = view_as_complex(x_flat, near_field_shape)
     output_x = (
         output_x
         / jnp.linalg.vector_norm(output_x)

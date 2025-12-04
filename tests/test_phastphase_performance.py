@@ -16,9 +16,34 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 from phastphase.retrieval_jax import retrieve
+from phastphase.retrieval_jax.alternative_methods._gradient_flows import *
+from phastphase.retrieval_jax.alternative_methods._initializations import *
 
 
 SELECTED_TEST_CASES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+SELECTED_DESCENT_METHODS = [0]
+SELECTED_WIND_METHODS = [0]
+SELECTED_MAX_ITERS = [100]
+SELECTED_GRAD_TOLERANCES = [1e-8]
+SELECTED_SHOULD_GUESS_WIND = [False]
+SELECTED_FOURIER_OVERSAMPLES = [2]
+SELECTED_CONVERGENCE_TOLERANCES = [5e-4]
+SELECTED_MAX_RANDOM_RESTARTS = [10]
+
+RANDOM_GENERATOR = np.random.default_rng(0)
+
+
+# (method_name, method_function, is_active?)
+INITIAL_GUESS_METHODS = [
+    ("random", random_initialization, True),
+    ("spectral", spectral_initialization, False),
+    ("trunc_spectral", truncated_spectral_initialization, False),
+    ("ortho", orthogonality_promoting_initialization, False),
+]
+
+
+# Filter the list to only include active methods
+ACTIVE_METHODS = [m for m in INITIAL_GUESS_METHODS if m[2]]
 
 
 def pytest_generate_tests(metafunc):
@@ -68,68 +93,303 @@ def pytest_generate_tests(metafunc):
         ids=[f"case_{case_idx}-{cf}" for case_idx, (_, case_file_ids) in case_data.items() for cf in case_file_ids]
     )
 
-    # Set default parameters.
-    metafunc.parametrize("descent_method", [0])
-    metafunc.parametrize("max_iters", [30])
-    metafunc.parametrize("grad_tolerance", [1e-8])
-    metafunc.parametrize("wind_method", [0])
-    metafunc.parametrize("should_guess_wind", [False])
-    metafunc.parametrize("fourier_oversample", [2])
-    metafunc.parametrize("convergence_tolerance", [1e-3])
+
+@pytest.fixture(params=SELECTED_DESCENT_METHODS)
+def descent_method(request):
+    """Fixture for descent method."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_MAX_ITERS)
+def max_iters(request):
+    """Fixture for maximum iterations."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_GRAD_TOLERANCES)
+def grad_tolerance(request):
+    """Fixture for gradient tolerance."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_WIND_METHODS)
+def wind_method(request):
+    """Fixture for winding method."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_SHOULD_GUESS_WIND)
+def should_guess_wind(request):    
+    """Fixture for whether to guess winding number."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_FOURIER_OVERSAMPLES)
+def fourier_oversample(request):
+    """Fixture for Fourier oversampling factor."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_CONVERGENCE_TOLERANCES)
+def convergence_tolerance(request):
+    """Fixture for convergence tolerance."""
+    return request.param
+
+
+@pytest.fixture(params=SELECTED_MAX_RANDOM_RESTARTS)
+def max_random_restarts(request):
+    """Fixture for maximum random restarts."""
+    return request.param
+
+
+@pytest.fixture
+def case_data(case_file):
+    """Fixture to load dataset from case_file."""
+    return np.load(case_file)
+
+    
+@pytest.fixture
+def near_field(case_data):
+    """Fixture to extract near_field from case_data."""
+    return jnp.asarray(case_data["near_field"], dtype=jnp.complex128)
+
+
+@pytest.fixture
+def far_field(near_field):
+    """Fixture to compute far_field from near_field."""
+        # build far-field intensity (oversample by specified factor)
+    y = jnp.abs(jnp.fft.fft2(near_field, s=jnp.array(jnp.shape(near_field)), norm="ortho"))**2
+    return y / (jnp.shape(y)[0]*jnp.shape(y)[1])
+
+
+@pytest.fixture
+def far_field_oversampled(near_field, fourier_oversample):
+    """Fixture to compute far_field from near_field."""
+        # build far-field intensity (oversample by specified factor)
+    y = jnp.abs(jnp.fft.fft2(near_field, s=jnp.array(jnp.shape(near_field))*fourier_oversample, norm="ortho"))**2
+    return y / (jnp.shape(y)[0]*jnp.shape(y)[1])
+
+
+@pytest.fixture
+def support_mask(near_field):
+    # Use a full mask.
+    # TODO: Maybe calculate support from image?
+    mask = jnp.ones_like(near_field)
+    return mask
+
+
+@pytest.fixture
+def winding_guess(case_data, should_guess_wind):
+    """Fixture to extract winding guess from case_data."""
+    bright_spot = case_data["spot_center"]
+    winding_guess = (int(bright_spot[0]), int(bright_spot[1])) if not should_guess_wind else None
+    return winding_guess
+
+
+@pytest.fixture(params=ACTIVE_METHODS, ids=[m[0] for m in ACTIVE_METHODS])
+def initial_guess(request, far_field, max_random_restarts):
+    """
+    This fixture returns the actual x0 vector.
+    """
+    key = jax.random.PRNGKey(0)
+
+    method_name, method_func, _ = request.param
+    
+    # Configure retry count based on the method type
+    max_attempts = max_random_restarts if method_name == "random" else 1
+
+    def guess_generator():
+        current_key = key
+        subkey = key
+        for _ in range(max_attempts):
+            if method_name == "random":
+                # For random restarts, we need a fresh key for every iteration
+                current_key, subkey = jax.random.split(current_key)
+
+            # TODO: Pass initialization-specific parameters?
+            yield method_func(
+                near_field_shape=far_field.shape,
+                measured_intensity=jnp.abs(far_field),
+                random_key=subkey,
+            )
+
+    # Return the iterator object so the test can loop over it
+    return guess_generator()
+
+
+@pytest.fixture
+def execution_timer():
+    """
+    A context manager fixture to measure execution time.
+    Usage:
+        with execution_timer as t:
+            # do work
+        print(t.duration)
+    """
+    class Timer:
+        def __enter__(self):
+            self.start = time.time()
+            self.duration = 0.0
+            return self
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.duration = time.time() - self.start
+            
+    return Timer()
+
+
+@pytest.fixture
+def evaluate_convergence(case_id, case_file, convergence_tolerance):
+    """
+    Returns a FUNCTION that performs error calculation, reporting, 
+    and assertion. This cleans up the test body significantly.
+    """
+    def _evaluate(prediction, ground_truth, timer_obj, metadata=None, output=True):
+        # 1. Normalization (Phase Retrieval ambiguity handling)
+        # Note: In real phase retrieval, you might need to align the global phase 
+        # (e.g., x_out * jnp.exp(-1j * angle)) before comparing. 
+        # Here we just normalize norms for simplicity.
+        x_out = prediction / jnp.linalg.norm(prediction)
+        x_gt = ground_truth / jnp.linalg.norm(ground_truth)
+
+        # 2. Error Calculation (Relative Error)
+        err = jnp.linalg.norm(x_out - x_gt) / jnp.linalg.norm(x_gt)
+        
+        # 3. Reporting
+        # We construct a log string from the metadata dict provided
+        meta_str = " ".join([f"{k}={v}" for k, v in (metadata or {}).items()])
+        duration = timer_obj.duration if timer_obj else 0.0
+        
+        if output:
+            print(f"\n[Case ID={case_id} File={case_file}] {meta_str} | Error={err:.4e} | Time={duration:.4f}s]", flush=True)
+        
+        # 4. Convergence Check (Assertion)
+        # We explicitly cast to float to avoid JAX array boolean ambiguity in some contexts
+        assert float(err) < convergence_tolerance, f"Convergence failed. Error {err:.4e} > Tol {convergence_tolerance}"
+        
+        return err
+
+    return _evaluate
 
 
 def test_phastphase_retrieve(
     case_id: int,
     case_file: str,
+    near_field: jnp.ndarray,
+    far_field_oversampled: jnp.ndarray,
+    support_mask: jnp.ndarray,
+    winding_guess: tuple,
+    wind_method: int,
     descent_method: int, 
     max_iters: int, 
     grad_tolerance: float, 
-    wind_method: int,
-    should_guess_wind: bool,
-    fourier_oversample: int,
-    convergence_tolerance: float,
+    execution_timer,
+    evaluate_convergence
 ):
     """Helper: run retrieve() on one saved near-field object and perform checks.
 
     Returns the (err, duration) tuple for reporting if needed.
     """
-    # load dataset
-    data = np.load(case_file)
-    near_field = jnp.asarray(data["near_field"], dtype=jnp.complex128)
-    bright_spot = data["spot_center"]
-    winding_guess = (int(bright_spot[0]), int(bright_spot[1])) if not should_guess_wind else None
+    with execution_timer as t:
+        try:
+            x_out, val = retrieve(
+                far_field_oversampled,
+                support_mask,
+                max_iters=max_iters,
+                descent_method=descent_method,
+                grad_tolerance=grad_tolerance,
+                wind_method=wind_method,
+                winding_guess=winding_guess,
+            )
+        except Exception as exc:  # pragma: no cover - surface errors as test failures
+            pytest.fail(f"retrieve raised an exception: {exc}")
 
-    # build far-field intensity (oversample by specified factor)
-    y = jnp.abs(jnp.fft.fft2(near_field, s=jnp.array(jnp.shape(near_field))*fourier_oversample, norm="ortho"))**2
-    y = y / (jnp.shape(y)[0]*jnp.shape(y)[1])
+    # This handles normalization, error calc, printing, and asserting.
+    evaluate_convergence(
+        prediction=x_out,
+        ground_truth=near_field,
+        timer_obj=t,
+        metadata={
+            "method": "phastphase",
+            "winding_guess": winding_guess,
+            "descent_method": descent_method,
+            "wind_method": wind_method,
+            "max_iters": max_iters,
+            "grad_tolerance": grad_tolerance,
+        }
+    )
 
-    # Use a full mask.
-    # TODO: Maybe calculate support from image?
-    mask = jnp.ones_like(near_field)
 
-    start = time.time()
+def test_amplitude_flow_retrieve(
+    request,
+    case_id: int,
+    case_file: str,
+    near_field: jnp.ndarray,
+    far_field: jnp.ndarray,
+    initial_guess: iter,
+    grad_tolerance: float,
+    max_iters: int,
+    max_random_restarts: int,
+    execution_timer,
+    evaluate_convergence
+):
+    """Helper: run retrieve() on one saved near-field object and perform checks.
+
+    Returns the (err, duration) tuple for reporting if needed.
+    """
+    init_method = request.node.callspec.params["initial_guess"][0]
+    
+    success = False
+    min_err = float('inf')
+
     try:
-        x_out, val = retrieve(
-            y,
-            mask,
-            max_iters=max_iters,
-            descent_method=descent_method,
-            grad_tolerance=grad_tolerance,
-            wind_method=wind_method,
-            winding_guess=winding_guess,
-        )
+        for attempt, x0 in enumerate(initial_guess):
+            with execution_timer as t:
+                x_out = amplitude_flow(
+                    x0,
+                    far_field,
+                    grad_tolerance=grad_tolerance,
+                    iter_limit=max_iters,
+                )
+
+            try:
+                err = evaluate_convergence(
+                    prediction=x_out,
+                    ground_truth=near_field,
+                    timer_obj=t,
+                    metadata={
+                        "method": "amplitude_flow",
+                        "init_method": init_method,
+                        "attempt": f"{attempt + 1}",
+                        "max_iters": max_iters,
+                        "grad_tolerance": grad_tolerance,
+                    },
+                    output=False,
+                )
+
+                # Success! Found a solution that converges.
+                success = True
+                break
+            except AssertionError as e:
+                # Capture error and continue to the next guess from the fixture
+                continue
     except Exception as exc:  # pragma: no cover - surface errors as test failures
         pytest.fail(f"retrieve raised an exception: {exc}")
-    duration = time.time() - start
 
-    x_out = x_out / jnp.linalg.vector_norm(x_out)
-    near_field = near_field / jnp.linalg.vector_norm(near_field)
-
-    # compute relative error
-    err = jnp.linalg.vector_norm(x_out - near_field) / jnp.linalg.vector_norm(near_field)
-    
-    # Report metrics (pytest will capture these)
-    print(f"case_id={case_id} case_file={case_file} descent={descent_method} err={err:.4f} time={duration:.2f}s")
-
-    # ensure routine made progress / returned a reasonable result
-    assert err < convergence_tolerance, f"High relative error: {err}"
+    # If we exhaust the generator without returning, the test has failed.
+    if success:
+        evaluate_convergence(
+            prediction=x_out,
+            ground_truth=near_field,
+            timer_obj=t,
+            metadata={
+                "method": "amplitude_flow",
+                "init_method": init_method,
+                "attempt": f"{attempt + 1}",
+                "max_iters": max_iters,
+                "grad_tolerance": grad_tolerance,
+            },
+            output=True,
+        )
+    else:
+        pytest.fail(f"method=amplitude_flow init_method={init_method} failed to converge after {attempt + 1} attempts.")

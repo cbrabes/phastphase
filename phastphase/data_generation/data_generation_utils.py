@@ -181,7 +181,7 @@ def add_delta_spot(magnitude_map, x0=None, y0=None, radius=None, magnitude_multi
     radius = radius if radius is not None else random.randrange(0, 10)
     magnitude_multiplier = magnitude_multiplier if magnitude_multiplier is not None else np.random.normal(0.5, 2.0)
 
-    total_magnitude = np.sum(magnitude_map)
+    total_magnitude = np.linalg.vector_norm(magnitude_map, ord=1)
     spot_magnitude = total_magnitude * magnitude_multiplier
 
     xx = np.arange(H)[:, None]
