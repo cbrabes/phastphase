@@ -18,6 +18,7 @@ jax.config.update("jax_enable_x64", True)
 from phastphase.retrieval_jax import retrieve
 from phastphase.retrieval_jax.alternative_methods._gradient_flows import *
 from phastphase.retrieval_jax.alternative_methods._initializations import *
+from phastphase.retrieval_jax._alternating_projections import *
 
 
 SELECTED_TEST_CASES = [1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -36,8 +37,8 @@ RANDOM_GENERATOR = np.random.default_rng(0)
 # (method_name, method_function, is_active?)
 INITIAL_GUESS_METHODS = [
     ("random", random_initialization, False),
-    ("spectral", spectral_initialization, False),
-    ("trunc_spectral", truncated_spectral_initialization, True),
+    ("spectral", spectral_initialization, True),
+    ("trunc_spectral", truncated_spectral_initialization, False),
     ("ortho", orthogonality_promoting_initialization, False),
 ]
 
@@ -197,7 +198,7 @@ def winding_guess(case_data, should_guess_wind):
 
 
 @pytest.fixture(params=ACTIVE_INIT_METHODS, ids=[m[0] for m in ACTIVE_INIT_METHODS])
-def initial_guess(request, far_field, max_random_restarts):
+def initial_guess(request, near_field, far_field_oversampled, max_random_restarts):
     """
     This fixture returns the actual x0 vector.
     """
@@ -218,8 +219,8 @@ def initial_guess(request, far_field, max_random_restarts):
 
             # TODO: Pass initialization-specific parameters?
             yield method_func(
-                near_field_shape=far_field.shape,
-                measured_intensity=jnp.abs(far_field),
+                near_field_shape=near_field.shape,
+                measured_intensity=far_field_oversampled,
                 random_key=subkey,
             )
 
@@ -267,6 +268,9 @@ def evaluate_convergence(case_id, case_file, convergence_tolerance):
         # Here we just normalize norms for simplicity.
         x_out = prediction / jnp.linalg.norm(prediction)
         x_gt = ground_truth / jnp.linalg.norm(ground_truth)
+
+        x_out = x_out / jnp.sign(x_out[0,0]) # Fix global phase ambiguity for error calc
+        x_gt = x_gt / jnp.sign(x_gt[0,0]) # Fix global phase ambiguity for error calc
 
         # 2. Error Calculation (Relative Error)
         err = jnp.linalg.norm(x_out - x_gt) / jnp.linalg.norm(x_gt)
@@ -319,6 +323,7 @@ def test_phastphase_retrieve(
             )
         except Exception as exc:  # pragma: no cover - surface errors as test failures
             pytest.fail(f"retrieve raised an exception: {exc}")
+            return
 
     # This handles normalization, error calc, printing, and asserting.
     evaluate_convergence(
@@ -337,6 +342,81 @@ def test_phastphase_retrieve(
 
 
 def test_gradient_flow_retrieve(
+    request,
+    case_id: int,
+    case_file: str,
+    near_field: jnp.ndarray,
+    far_field_oversampled: jnp.ndarray,
+    flow_method,
+    initial_guess: iter,
+    grad_tolerance: float,
+    max_iters: int, 
+    max_random_restarts: int,
+    execution_timer,
+    evaluate_convergence
+):
+    """Helper: run retrieve() on one saved near-field object and perform checks.
+
+    Returns the (err, duration) tuple for reporting if needed.
+    """
+    init_method_name = request.node.callspec.params["initial_guess"][0]
+    flow_method_name = request.node.callspec.params["flow_method"][0]
+    
+    min_err = float('inf')
+    min_prediction = None
+    min_t = None
+
+    try:
+        for attempt, x0 in enumerate(initial_guess):          
+            with execution_timer as t:
+                x_out = flow_method(
+                    x0,
+                    far_field_oversampled,
+                    grad_tolerance=grad_tolerance,
+                    iter_limit=max_iters,
+                )
+
+            err, success = evaluate_convergence(
+                prediction=x_out,
+                ground_truth=near_field,
+                timer_obj=t,
+                output=False,
+            )
+            if success:
+                # Found a solution that converges.
+                min_err = err
+                min_prediction = x_out
+                min_t = t
+                break
+            else:
+                # Capture error and continue to the next guess from the fixture
+                if err < min_err:
+                    min_err = err
+                    min_prediction = x_out
+                    min_t = t
+
+    except Exception as exc:  # pragma: no cover - surface errors as test failures
+        pytest.fail(f"retrieve raised an exception: {exc}")
+        return
+
+    # If we exhaust the generator without returning, the test has failed.
+    evaluate_convergence(
+        prediction=min_prediction,
+        ground_truth=near_field,
+        timer_obj=min_t,
+        metadata={
+            "flow_method": flow_method_name,
+            "init_method": init_method_name,
+            "attempt": f"{attempt + 1}",
+            "max_iters": max_iters,
+            "max_random_restarts": max_random_restarts,
+            "grad_tolerance": grad_tolerance,
+        },
+        output=True,
+    )
+
+
+def test_HIO_retrieve(
     request,
     case_id: int,
     case_file: str,
