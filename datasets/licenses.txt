@@ -1,0 +1,36 @@
+Regular
+=======
+
+1. "Pillars of Creation", Source: NASA, ESA, CSA, STScI; Image Processing: Joseph DePasquale (STScI), Anton Koekemoer (STScI), Alyssa Pagan (STScI), Public Domain, https://science.nasa.gov/asset/webb/pillars-of-creation-nircam-image/ 
+
+2. "Mountains", Eugeniy Golovko, CC BY 2.0, https://www.flickr.com/photos/127534097@N04/15232292419
+
+3. "Iris versicolor, Blue flag Iris, Howard County, MD, Helen Lowe Metzman_2017-06-01-13.32", Sam Droege, Public Domain, https://www.flickr.com/photos/54563451@N08/35758300661
+
+4. "Depressed musician vintage drawing", The British Library, CC0 1.0, https://www.rawpixel.com/image/573060/depressed-musician-vintage-drawing
+
+5. "Filament Snake In Sun's South-East Limb [Full Disk]", NASA Goddard Photo and Video, CC BY 2.0, https://www.flickr.com/photos/24662369@N07/5238562501
+
+6. "Red-eyed tree frog 3", Danel Solabarrieta, CC BY-SA 2.0, https://www.flickr.com/photos/70073699@N00/10542208154
+
+7. "pole surrounded by trees", Ben Mortimer Photography, CC BY 2.0, https://www.flickr.com/photos/71768083@N07/6589024207
+
+8. "cat", chen.xiahong, CC BY-SA 2.0, https://www.flickr.com/photos/101210291@N05/9665358037
+
+9. "Parisian Bicycle", Dusty J, CC BY 2.0, https://www.flickr.com/photos/55608722@N06/13205411865
+
+10. "Dark City III", nosha, CC BY-SA 2.0, https://www.flickr.com/photos/77316550@N00/2947452687
+
+
+Sparse
+======
+
+1. "Experimental high-resolution SPI imaging", High-Resolution Single-Pixel Imaging of Spatially Sparse Objects: Real-Time Imaging in the Near-Infrared and Visible Wavelength Ranges Enhanced with Iterative Processing or Deep Learning, CC BY 4.0, https://www.mdpi.com/sensors/sensors-24-08139/article_deploy/html/images/sensors-24-08139-g013.png
+
+2. "Hubble assembles wide view of the distant Universe", NASA, ESA, G. Illingworth and D. Magee (University of California, Santa Cruz), K. Whitaker (University of Connecticut), R. Bouwens (Leiden University), P. Oesch (University of Geneva), and the Hubble Legacy Field team; CC BY 4.0, https://www.esa.int/ESA_Multimedia/Images/2019/05/Hubble_assembles_wide_view_of_the_distant_Universe
+
+3. "Interacting galaxies Arp 142 (MIRI image)", NASA, ESA, CSA, STScI, CC BY 4.0, https://www.esa.int/ESA_Multimedia/Images/2024/07/Interacting_galaxies_Arp_142_MIRI_image
+
+4. "Telescope Alignment Evaluation Image", NASA/STScI, Public Domain, https://www.nasa.gov/wp-content/uploads/2022/07/webb.focus3_.png
+
+5. "Webb’s first deep field", NASA, ESA, CSA, and STScI, ESA Standard Licence, https://www.esa.int/About_Us/ESAC/First_images_from_Webb_telescope_reveal_unseen_Universe
