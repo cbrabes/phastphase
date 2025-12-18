@@ -6,3 +6,4 @@ optax
 opencv-python
 matplotlib
 zernike
+numba>=0.55
