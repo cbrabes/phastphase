@@ -45,3 +45,6 @@ build/
 
 # local
 keys.json
+*.db.lock
+
+scratch/
