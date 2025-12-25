@@ -252,7 +252,7 @@ def _RAAR_projection_step(
 
     Args:
         state (_HIOState): The current state of the HIO algorithm.
-        y (jnp.ndarray): The target amplitudes.
+        y (jnp.ndarray): The target intensities.
         mask (jnp.ndarray): The near-field support mask.
 
     Returns:
@@ -260,14 +260,10 @@ def _RAAR_projection_step(
     """
     y_c = jnp.fft.fft2(state.x, norm="ortho")
     y_c = jnp.sign(y_c) * jnp.sqrt(y)
-    x_new = jnp.fft.ifft2(y_c, norm="ortho")
-    x_new = mask * (x_new) + (1 - mask) * (state.x - beta * x_new)
+    x_prime = jnp.fft.ifft2(y_c, norm="ortho")
+    x_new = mask * (x_prime) + (1 - mask) * (beta * state.x + (1 - beta) * x_prime)
 
-    x_new = 1 / 2 * beta * (Rs(Rm(state.x, y), mask) + state.x) + (
-        1 - beta
-    ) * Pm(state.x, y)
-
-    residual = normalized_intensity_loss(mask * x_new, y)
+    residual = normalized_intensity_loss(x_prime, y)
 
     return _HIOState(x=x_new, iteration=state.iteration + 1, residual=residual)
 

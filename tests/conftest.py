@@ -483,6 +483,7 @@ def evaluate_convergence(
         metadata=None, 
         output=True,
         save_to_db=True,
+        ensure_success=True,
     ):
         # Normalization (Phase Retrieval ambiguity handling)
         # Note: In real phase retrieval, you might need to align the global phase 
@@ -524,6 +525,7 @@ def evaluate_convergence(
         if output:
             print(f"\n[Case ID={case_id} File={case_file}] {meta_str} | Error={err:.4e} | Time={duration:.4f}s]", flush=True, file=sys.stderr)
         
+        if ensure_success:
             # Convergence Check (Assertion)
             # We explicitly cast to float to avoid JAX array boolean ambiguity in some contexts
             assert float(err) < convergence_tolerance, f"Convergence failed. Error {err:.4e} > Tol {convergence_tolerance}"

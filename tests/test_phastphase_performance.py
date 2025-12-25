@@ -56,7 +56,10 @@ def test_phastphase_retrieve(
             "winding_guess": winding_guess,
             "descent_method": descent_method,
             "wind_method": wind_method,
-        }
+        },
+        output=True,
+        save_to_db=True,
+        ensure_success=True
     )
 
 
@@ -108,6 +111,7 @@ def test_gradient_flow_retrieve(
                 },
                 output=False,
                 save_to_db=False,
+                ensure_success=False
             )
             if success:
                 # Found a solution that converges.
@@ -139,6 +143,7 @@ def test_gradient_flow_retrieve(
         },
         output=True,
         save_to_db=True,
+        ensure_success=True
     )
 
 
@@ -190,6 +195,7 @@ def test_gradient_flow_sanity(
                 },
                 output=False,
                 save_to_db=False,
+                ensure_success=False
             )
             if success:
                 # Found a solution that converges.
@@ -221,6 +227,7 @@ def test_gradient_flow_sanity(
         },
         output=True,
         save_to_db=False,
+        ensure_success=True
     )
 
 
@@ -231,8 +238,8 @@ def test_alternating_projection_retrieve(
     near_field: jnp.ndarray,
     far_field_oversampled: jnp.ndarray,
     padded_support_mask: jnp.ndarray,
-    # padded_random_initial_guess: list,
-    padded_perturbed_initial_guess: list,
+    padded_random_initial_guess: list,
+    # padded_perturbed_initial_guess: list,
     projection_method,
     betas: list,
     grad_tolerance: float,
@@ -254,8 +261,8 @@ def test_alternating_projection_retrieve(
     min_num_iterations = None
 
     try:
-        # for attempt, (x0, beta) in enumerate(itertools.product(padded_random_initial_guess, betas)):  
-        for attempt, (x0, beta) in enumerate(itertools.product(padded_perturbed_initial_guess, betas)):          
+        for attempt, (x0, beta) in enumerate(itertools.product(padded_random_initial_guess, betas)):  
+        # for attempt, (x0, beta) in enumerate(itertools.product(padded_perturbed_initial_guess, betas)):          
             with execution_timer as t:
                 x_out, num_iterations, residual = projection_method(
                     x0=x0,
@@ -279,8 +286,9 @@ def test_alternating_projection_retrieve(
                     "residual": float(residual),
                     "beta": beta,
                 },
-                output=False,
-                save_to_db=False,
+                output=True,
+                save_to_db=True,
+                ensure_success=False
             )
             if success:
                 # Found a solution that converges.
@@ -319,4 +327,5 @@ def test_alternating_projection_retrieve(
         },
         output=True,
         save_to_db=False,
+        ensure_success=True
     )
