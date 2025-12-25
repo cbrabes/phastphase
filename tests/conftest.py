@@ -483,6 +483,7 @@ def evaluate_convergence(
         metadata=None, 
         output=True,
         save_to_db=True,
+        save_recovered=False,
         ensure_success=True,
     ):
         # Normalization (Phase Retrieval ambiguity handling)
@@ -519,7 +520,8 @@ def evaluate_convergence(
                 max_iters=int(max_iters),
                 fourier_oversample=int(fourier_oversample),
                 near_field_md5=near_field_md5,
-                metadata=metadata or {}
+                metadata=metadata or {},
+                recovered_object=jnp.array(x_out) if save_recovered else None,
             )
 
         if output:

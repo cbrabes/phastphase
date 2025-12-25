@@ -59,6 +59,7 @@ def test_phastphase_retrieve(
         },
         output=True,
         save_to_db=True,
+        save_recovered=True,
         ensure_success=True
     )
 
@@ -111,6 +112,7 @@ def test_gradient_flow_retrieve(
                 },
                 output=False,
                 save_to_db=False,
+                save_recovered=False,
                 ensure_success=False
             )
             if success:
@@ -143,6 +145,7 @@ def test_gradient_flow_retrieve(
         },
         output=True,
         save_to_db=True,
+        save_recovered=False,
         ensure_success=True
     )
 
@@ -195,6 +198,7 @@ def test_gradient_flow_sanity(
                 },
                 output=False,
                 save_to_db=False,
+                save_recovered=False,
                 ensure_success=False
             )
             if success:
@@ -227,6 +231,7 @@ def test_gradient_flow_sanity(
         },
         output=True,
         save_to_db=False,
+        save_recovered=False,
         ensure_success=True
     )
 
@@ -288,6 +293,7 @@ def test_alternating_projection_retrieve(
                 },
                 output=True,
                 save_to_db=True,
+                save_recovered=False,
                 ensure_success=False
             )
             if success:
@@ -327,5 +333,6 @@ def test_alternating_projection_retrieve(
         },
         output=True,
         save_to_db=False,
+        save_recovered=False,
         ensure_success=True
     )
