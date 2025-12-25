@@ -40,7 +40,8 @@ class ResultsDatabase:
             convergence_tolerance REAL,
             compute_duration REAL,
             near_field_md5 TEXT,
-            metadata JSON
+            metadata JSON,
+            recovered_object BLOB
         )
         """
         self.conn.execute(query)
@@ -60,12 +61,13 @@ class ResultsDatabase:
         max_iters: int,
         fourier_oversample: int,
         near_field_md5: str,
-        metadata: dict
+        metadata: dict,
+        recovered_object: jnp.ndarray = None
     ):
         query = """
             
-        INSERT INTO results (timestamp, case_id, case_file, method_name, init_method_name, num_attempts, error, grad_tolerance, max_iters, fourier_oversample, convergence_tolerance, compute_duration, near_field_md5, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO results (timestamp, case_id, case_file, method_name, init_method_name, num_attempts, error, grad_tolerance, max_iters, fourier_oversample, convergence_tolerance, compute_duration, near_field_md5, metadata, recovered_object)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         self.conn.execute(query, (
             datetime.datetime.now().isoformat(),
@@ -81,7 +83,8 @@ class ResultsDatabase:
             float(convergence_tolerance), 
             float(compute_duration), 
             near_field_md5, 
-            json.dumps(metadata)
+            json.dumps(metadata),
+            recovered_object.tobytes() if recovered_object is not None else None
         ))
         self.conn.commit()
 
