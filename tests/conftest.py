@@ -456,6 +456,9 @@ def db_session(request):
     
     # Clean up when the worker finishes its batch of tests
     db.close()
+    
+    if os.path.exists(lock_path):
+        os.remove(lock_path)
 
 
 @pytest.fixture
