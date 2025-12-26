@@ -2,7 +2,7 @@ import sqlite3
 import numpy as np
 import matplotlib.pyplot as plt
 
-def generate_cdf_plot(db_path="tests/phase_retrieval_results.db"):
+def generate_cdf_plot(case_range, should_dedup=True, db_path="tests/phase_retrieval_results.db"):
     """
     Connects to the results DB and plots a CDF of error rates
     for 'phastphase', cases 1-7, deduped by near_field_md5.
@@ -19,12 +19,13 @@ def generate_cdf_plot(db_path="tests/phase_retrieval_results.db"):
     # 2. Filter by case_id between 1 and 7
     # 3. Group by 'near_field_md5' to handle multiple runs on the same problem.
     # 4. Take MIN(error) to represent the best result achieved for that problem instance.
-    query = """
-    SELECT MIN(error) as best_error
+    query = f"""
+    SELECT {'MIN(error) as best_error' if should_dedup else 'error'}
     FROM results
     WHERE method_name = 'phastphase'
-      AND case_id BETWEEN 1 AND 7
-    GROUP BY near_field_md5
+      AND case_id BETWEEN {case_range[0]} AND {case_range[1]}
+      AND error is not NULL
+    {'GROUP BY near_field_md5' if should_dedup else ''}
     """
 
     cursor.execute(query)
@@ -32,7 +33,7 @@ def generate_cdf_plot(db_path="tests/phase_retrieval_results.db"):
     conn.close()
 
     if not rows:
-        print("No data found matching criteria (method='phastphase', case_id 1-7).")
+        print(f"No data found matching criteria (method='phastphase', case_id {case_range[0]}-{case_range[1]}).")
         print("Run the tests first to generate data.")
         return
 
@@ -61,18 +62,19 @@ def generate_cdf_plot(db_path="tests/phase_retrieval_results.db"):
     plt.xscale('log') # Log scale is standard for error plots
     plt.xlabel('Reconstruction Error (Relative Norm)')
     plt.ylabel('Probability (Fraction of Cases Solved)')
-    plt.title(f'CDF of PhastPhase Convergence Error\n(Case IDs 1-7, {len(errors)} Cases, 1000 Iterations, 1e-8 Gradient Tolerance)')
+    plt.title(f'CDF of PhastPhase Convergence Error\n(Case IDs {case_range[0]}-{case_range[1]}, {len(errors)} Cases, 1000 Iterations, 1e-8 Gradient Tolerance)')
     plt.grid(True, which="both", ls="-", alpha=0.3)
     plt.legend()
     
     # Optional: Add a threshold line for "Success"
     # plt.axvline(x=1e-2, color='r', linestyle='--', alpha=0.5, label='Success Threshold (1e-2)')
     
-    output_filename = "error_cdf_phastphase.png"
+    output_filename = f"error_cdf_phastphase_{case_range[0]}_to_{case_range[1]}.png"
     plt.savefig(output_filename)
     print(f"Graph saved to {output_filename}")
     plt.show()
 
 
 if __name__ == "__main__":
-    generate_cdf_plot()
+    generate_cdf_plot(case_range=(1, 7), should_dedup=False)
+    generate_cdf_plot(case_range=(8, 9), should_dedup=False)
