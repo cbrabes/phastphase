@@ -16,3 +16,6 @@ dynamic = ["version", "dependencies", "description", "authors"]
 [project.urls]
 "Homepage" = "https://github.com/slmsuite/phastphase"
 "Documentation" = "https://phastphase.readthedocs.io/en/latest/"
+
+[tool.setuptools]
+packages = ["phastphase"]
