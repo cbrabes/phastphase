@@ -6,7 +6,7 @@ from setuptools import setup
 
 NAME = "phastphase"
 VERSION = "0.0.89"
-DEPENDENCIES = ["numpy", "pytorch-minimize", "jax"]
+DEPENDENCIES = ["numpy", "pytorch-minimize", "jax", "lineax", "optax", "tqdm", "opencv-python", "matplotlib", "zernike"]
 DESCRIPTION = (
     "Accurate solution to the phase retrieval problem for near-Schwarz objects."
 )
