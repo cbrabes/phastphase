@@ -7,6 +7,8 @@ from skimage import data, filters, feature
 from skimage.filters import gaussian
 from skimage.measure import label, regionprops
 from skimage import morphology
+from scipy.ndimage import label, center_of_mass
+import itertools
 
 import phastphase
 from phastphase.retrieval_jax import retrieve
@@ -46,6 +48,62 @@ def plot_farfield(reconstruction,far_field):
       a.set_xticks([])
       a.set_yticks([])
   return 1
+
+
+def calc_cost(far_field,output,type_cost = 0):
+  #type_cost = 0 for L2_MAG_LOSS
+  #type_cost = 1 for POISSON_LOSS
+  #Far field is INTENSITY, near field is COMPLEX AMPLITUDE
+
+  if np.shape(far_field) != np.shape(output):
+    target_shape = np.shape(far_field)
+    pad_shape = np.shape(output)
+    # Compute padding for each dimension
+    pad_width = [(0, target_shape[i] - pad_shape[i]) for i in range(len(target_shape))]
+
+    # Apply padding
+    output = np.pad(output, pad_width, mode='constant', constant_values=0)
+    print('Padded for calculation')
+
+  FX = help_funcs.Fourier(output)
+  far_field = far_field + 1e-10
+  if type_cost == 0:
+    return  np.square(np.linalg.vector_norm((np.abs(FX)**2)/np.sqrt(far_field) - np.sqrt(far_field))) /8 # the 8 is a istake in the origin
+  elif type_cost == 1:
+    return np.sum(np.abs(FX)**2- far_field * np.log(np.abs(FX)))
+  print('ERROR!')
+  return 1e10
+
+
+def evaluate_results(psiL, psiR, F_ampL, F_ampR, support2, message = ''):
+    threshold_value_gt = filters.threshold_li(np.abs(psiL))
+    binary_image_gt = np.abs(psiL) > threshold_value_gt  # Threshold the image
+
+    min_row, min_col, max_row, max_col = help_funcs.get_bounds(binary_image_gt)
+
+    image_L_gt = psiL[min_row:max_row,min_col:max_col]
+    image_R_gt = psiR[min_row:max_row,min_col:max_col]
+    # support_gt = support2[min_row:max_row,min_col:max_col]
+
+    diff_angle_gt = np.angle(image_L_gt) - np.angle(image_R_gt)
+
+    plt.figure()
+    plt.imshow(diff_angle_gt ,cmap = 'gray', vmin = -0.2, vmax = 0.2)
+
+
+    plot_farfield(psiL, F_ampL)
+
+    print('#############################')
+    print(message)
+    cost_L_sergey = calc_cost(F_ampL**2, psiL *support2 )
+    cost_R_sergey = calc_cost(F_ampR**2, psiR *support2)
+    print('THE L2 COST FOR L: %d (%.2f e6)'%(cost_L_sergey,cost_L_sergey*1e-6))
+    print('THE L2 COST FOR R: %d(%.2f e6)'%(cost_R_sergey,cost_R_sergey*1e-6))
+    cost_L_sergey_p = calc_cost(F_ampL**2, psiL *support2,type_cost=1 )
+    cost_R_sergey_p = calc_cost(F_ampR**2 , psiR *support2,type_cost=1 )
+    print('THE poissin COST FOR L: %d (%.2f e9)'%(cost_L_sergey_p,cost_L_sergey_p*1e-9))
+    print('THE poissin COST FOR R: %d(%.2f e9)'%(cost_R_sergey_p,cost_R_sergey_p*1e-9))
+    print('#############################')
 
 
 def align_global_phase(x_true, x_rec):
@@ -91,7 +149,7 @@ def run_phastphase(
     # Error Calculation (Relative Error)
     err = jnp.linalg.norm(x_out - x_gt) / jnp.linalg.norm(x_gt)
 
-    return x_out, err
+    return x_out, err, val
 
 
 def expand_circles(mask, main_scale_factor=1.2, reference_scale_factor=2):
@@ -187,6 +245,62 @@ def find_max_overlap_offset(mask1, mask2):
     return y_shift, x_shift, max_overlap_value
 
 
+def get_blob_centers(image, threshold=0):
+    """Finds connected blobs and returns their centroids."""
+    # Create a binary mask of the blobs
+    mask = image > threshold
+    
+    # Label each separate blob with a unique integer
+    labeled_array, num_features = label(mask)
+    
+    # Calculate the center of mass (y, x) for each labeled blob
+    centers = center_of_mass(image, labeled_array, range(1, num_features + 1))
+    
+    # Remove any NaN results just in case, and convert to numpy array
+    return np.array([c for c in centers if not np.isnan(c).any()])
+
+def find_optimal_shift(image1, image2):
+    """
+    Finds the (dy, dx) shift to align image1 with image2 by minimizing
+    the distance between their blob centers.
+    """
+    centers1 = get_blob_centers(image1)
+    centers2 = get_blob_centers(image2)
+    
+    if len(centers1) == 0 or len(centers2) == 0:
+        raise ValueError("Could not find blobs in one or both images.")
+        
+    # Since the images are similar but not identical, we ensure we only match 
+    # up to the minimum number of blobs found in both images.
+    n_blobs = min(len(centers1), len(centers2))
+    
+    min_error = float('inf')
+    best_shift = None
+    
+    # We fix the order of centers1 and permute centers2 to find the best match.
+    # For 5 blobs, 5! = 120 iterations (virtually instantaneous).
+    for perm in itertools.permutations(range(len(centers2)), n_blobs):
+        matched_centers2 = centers2[list(perm)]
+        
+        # The optimal shift vector for a specific pairing is the mean difference
+        # between the sets of points: Shift = Mean(Centers2 - Centers1)
+        current_shift = np.mean(matched_centers2 - centers1[:n_blobs], axis=0)
+        
+        # Apply this shift to centers1
+        shifted_centers1 = centers1[:n_blobs] + current_shift
+        
+        # Calculate the sum of Euclidean distances between the shifted points and target points
+        distances = np.linalg.norm(shifted_centers1 - matched_centers2, axis=1)
+        total_distance = np.sum(distances)
+        
+        # Keep track of the shift that results in the lowest error
+        if total_distance < min_error:
+            min_error = total_distance
+            best_shift = current_shift
+            
+    return best_shift, min_error
+
+
 def crop_far_field(far_field_R, far_field_L):
    # Apply global thresholding using Otsu's method
     threshold_value = 0.01 #filters.threshold_otsu(far_field_R)
@@ -220,7 +334,7 @@ def recover_autocorrelated_mask(far_field):
     return binary_image
 
 
-def extract_mask_from_autocorrelation(autocorrelated_mask):
+def extract_mask_from_autocorrelation(autocorrelated_mask, should_roll = True):
     spots = [0,1]
 
     props = regionprops(label(autocorrelated_mask))
@@ -247,10 +361,14 @@ def extract_mask_from_autocorrelation(autocorrelated_mask):
     y,x = props_tight_support[2].centroid
 
     reference_point = (int(y),int(x))
-    support_rolled = np.roll(support_large, shift=int(y)-int(y0), axis=0)
-    support_rolled = np.roll(support_rolled, shift=int(x)-int(x0), axis=1)
 
-    return support_rolled, reference_point
+    if should_roll:
+        support = np.roll(support_large, shift=int(y)-int(y0), axis=0)
+        support = np.roll(support, shift=int(x)-int(x0), axis=1)
+    else:
+        support = support_large
+
+    return support, reference_point
 
 
 def pad_for_far_field(near_field, far_field):
